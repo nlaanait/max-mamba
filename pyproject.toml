@@ -1,0 +1,26 @@
+[project]
+dependencies = []
+description = "Add a short description here"
+name = "max-mamba"
+requires-python = ">= 3.11"
+version = "0.1.0"
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.pixi.project]
+channels = ["https://conda.modular.com/max-nightly", "https://conda.modular.com/max", "https://repo.prefix.dev/modular-community", "conda-forge"]
+platforms = ["osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+max_mamba = { path = ".", editable = true }
+
+[tool.pixi.tasks]
+test_rmsnorm_gated = "python3 tests/test_rmsnorm_gated.py"
+
+[tool.pixi.dependencies]
+max = ">=25.2.0.dev2025031505,<26"
+transformers = ">=4.49.0,<5"
+pytorch = ">=2.6.0,<3"
+pillow = ">=11.1.0,<12"
