@@ -1,44 +1,43 @@
-from max.engine.api import InferenceSession
-from max.dtype import DType
-from max.graph import Graph, TensorType
-from max_mamba.layers.conv import Conv1d
 import numpy as np
-
+import pytest
 import torch
 import torch.nn as nn
+from max.dtype import DType
+from max.engine.api import InferenceSession
+from max.graph import Graph, TensorType
+
+from max_mamba.layers.conv import Conv1d
 
 torch.manual_seed(1234)
 np.random.seed(1234)
 
 
-def init_input_tensor(size: tuple[int, ...]) -> np.ndarray:
-    # return np.random.rand(*size).astype(np.float32)
-    return np.ones(size, dtype=np.float32)
+@pytest.fixture
+def init_w_and_b_tensors():
+    def _init(kernel_shape):
+        weight = np.random.rand(*kernel_shape).astype(np.float32)  # type: ignore
+        bias = np.random.rand(kernel_shape[-1]).astype(np.float32)
+        return weight, bias
+
+    return _init
 
 
-def init_w_and_b_tensors(
-    kernel_shape: tuple[int, ...],
-) -> tuple[np.ndarray, np.ndarray]:
-    weight = np.random.randn(*kernel_shape).astype(np.float32)
-    bias = np.random.rand(kernel_shape[2]).astype(np.float32)
-    return weight, bias
+@pytest.fixture
+def init_np_tensor():
+    def _init(size):
+        return np.ones(size, dtype=np.float32)
+
+    return _init
 
 
-def init_w_and_b_tensors_kaiming(
-    kernel_shape: tuple[int, ...], groups: int, in_channels: int
-) -> tuple[np.ndarray, np.ndarray]:
-    weight = np.sqrt(groups / (in_channels * kernel_shape[0])) * np.random.uniform(
-        low=-1,
-        high=1,
-        size=(kernel_shape[0], int(in_channels / groups), kernel_shape[2]),
-    ).astype(np.float32)
-    bias = np.sqrt(groups / (in_channels * kernel_shape[0])) * np.random.uniform(
-        low=-1, high=1, size=(kernel_shape[2],)
-    ).astype(np.float32)
-    return weight, bias
+@pytest.fixture
+def torch_seed():
+    torch.manual_seed(1234)
+    np.random.seed(1234)
 
 
-def conv1d_test():
+def test_conv1d(RTOL, init_np_tensor, init_w_and_b_tensors):
+    # Test parameters
     in_channels = 4
     out_channels = 6
     kernel_size = 2
@@ -48,14 +47,14 @@ def conv1d_test():
     groups = 1
     has_bias = False
 
-    # Initialize input and weight tensors
+    # Initialize tensors
     input_size = (batch_size, seq_length, in_channels)
-    input_tensor = init_input_tensor(size=input_size)
+    input_tensor = init_np_tensor(size=input_size)
     weight, bias = init_w_and_b_tensors(
         kernel_shape=(kernel_size, in_channels, out_channels)
     )
 
-    # PyTorch Conv1d
+    # PyTorch implementation
     pt_conv1d = nn.Conv1d(
         in_channels=in_channels,
         out_channels=out_channels,
@@ -67,11 +66,12 @@ def conv1d_test():
     pt_conv1d.weight = nn.Parameter(torch.from_numpy(weight).permute(2, 1, 0))
     if has_bias:
         pt_conv1d.bias = nn.Parameter(torch.from_numpy(bias))
+
     pt_input = torch.from_numpy(input_tensor).permute(0, 2, 1)
     pt_output = pt_conv1d(pt_input).permute(0, 2, 1).detach().numpy()
 
-    # max_mamba Conv1d
-    max_output = max_conv1d(
+    # MAX implementation
+    max_output = get_max_conv1d_result(
         input_tensor=input_tensor,
         weight=weight,
         bias=bias,
@@ -83,12 +83,11 @@ def conv1d_test():
         has_bias=has_bias,
     )
 
-    # Compare outputs
-    assert np.allclose(pt_output, max_output, atol=1e-5)
-    print("Passed Conv1d Test")
+    np.testing.assert_allclose(pt_output, max_output, rtol=RTOL)
 
 
-def max_conv1d(
+# Helper function moved outside of test
+def get_max_conv1d_result(
     input_tensor: np.ndarray,
     weight: np.ndarray,
     bias: np.ndarray | None,
@@ -124,7 +123,3 @@ def max_conv1d(
     )
     result = model.execute(input_tensor)[0]
     return result.to_numpy()
-
-
-if __name__ == "__main__":
-    conv1d_test()

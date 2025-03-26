@@ -1,15 +1,13 @@
+import pytest
+import numpy as np
+import torch
 from max.engine.api import InferenceSession
 from max.dtype import DType
 from max.graph import Graph, TensorType
 from max_mamba.layers import Mamba2Cache
 from max_mamba.config import Mamba2Config
-import numpy as np
-
-
 from transformers.models.mamba2.modeling_mamba2 import Mamba2Cache as HF_Mamba2Cache
 from transformers import Mamba2Config as HF_MAMBA2CFG
-
-import torch
 
 torch.manual_seed(1234)
 
@@ -30,7 +28,7 @@ def init_mamba2configs() -> tuple[Mamba2Config, HF_MAMBA2CFG]:
     return (max_config, hf_config)
 
 
-def hf_cache(
+def get_hf_cache_results(
     batch_size: int,
     config: HF_MAMBA2CFG,
     new_conv_state: torch.Tensor,
@@ -57,54 +55,7 @@ def hf_cache(
     )
 
 
-def test_cache():
-    hf_config = HF_MAMBA2CFG()
-    max_config = Mamba2Config.generate(
-        pipeline_config=None,
-        huggingface_config=hf_config,
-        dtype=DType.float32,
-        logits_postprocessor=None,
-    )
-    batch_size = 1
-    conv_state_size = (
-        batch_size,
-        int(hf_config.expand * hf_config.hidden_size)
-        + 2 * hf_config.n_groups * hf_config.state_size,
-        hf_config.conv_kernel,
-    )
-    ssm_state_size = (
-        batch_size,
-        hf_config.num_heads,
-        hf_config.head_dim,
-        hf_config.state_size,
-    )
-    layer_idx = 1
-    conv_state = init_np_tensor(size=conv_state_size, dtype=np.float32)
-    ssm_state = init_np_tensor(size=ssm_state_size, dtype=np.float32)
-    pt_conv_state = torch.from_numpy(conv_state)
-    pt_ssm_state = torch.from_numpy(ssm_state)
-    pt_cache_state_pre_init, pt_cache_state_post_init, pt_cache_ssm_state = hf_cache(
-        batch_size=batch_size,
-        config=hf_config,
-        new_conv_state=pt_conv_state,
-        new_ssm_state=pt_ssm_state,
-        layer_idx=layer_idx,
-    )
-    max_cache_state_pre_init, max_cache_state_post_init, max_cache_ssm_state = (
-        max_cache(
-            batch_size=batch_size,
-            config=max_config,
-            new_conv_state=conv_state,
-            new_ssm_state=ssm_state,
-            layer_idx=layer_idx,
-        )
-    )
-    assert np.allclose(pt_cache_state_pre_init, max_cache_state_pre_init)
-    assert np.allclose(pt_cache_state_post_init, max_cache_state_post_init)
-    assert np.allclose(pt_cache_ssm_state, max_cache_ssm_state)
-
-
-def max_cache(
+def get_max_cache_results(
     batch_size: int,
     config: Mamba2Config,
     new_conv_state: np.ndarray,
@@ -160,5 +111,47 @@ def max_cache(
     )
 
 
-if __name__ == "__main__":
-    test_cache()
+def test_cache(RTOL, init_np_tensor, mamba2_configs):
+    max_config, hf_config = mamba2_configs
+    batch_size = 1
+
+    # Initialize test data
+    conv_state_size = (
+        batch_size,
+        int(hf_config.expand * hf_config.hidden_size)
+        + 2 * hf_config.n_groups * hf_config.state_size,
+        hf_config.conv_kernel,
+    )
+    ssm_state_size = (
+        batch_size,
+        hf_config.num_heads,
+        hf_config.head_dim,
+        hf_config.state_size,
+    )
+    layer_idx = 1
+
+    conv_state = init_np_tensor(size=conv_state_size)
+    ssm_state = init_np_tensor(size=ssm_state_size)
+    pt_conv_state = torch.from_numpy(conv_state)
+    pt_ssm_state = torch.from_numpy(ssm_state)
+
+    # Get results from both implementations
+    pt_results = get_hf_cache_results(
+        batch_size=batch_size,
+        config=hf_config,
+        new_conv_state=pt_conv_state,
+        new_ssm_state=pt_ssm_state,
+        layer_idx=layer_idx,
+    )
+
+    max_results = get_max_cache_results(
+        batch_size=batch_size,
+        config=max_config,
+        new_conv_state=conv_state,
+        new_ssm_state=ssm_state,
+        layer_idx=layer_idx,
+    )
+
+    # Compare results
+    for pt_result, max_result in zip(pt_results, max_results):
+        np.testing.assert_allclose(pt_result, max_result, rtol=RTOL)

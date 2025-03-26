@@ -1,30 +1,26 @@
+import numpy as np
 from max.engine.api import InferenceSession
 from max.dtype import DType
 from max.graph import Graph, TensorType
 from max_mamba.layers import RMSNormGated
-import numpy as np
-
 from transformers.models.mamba2.modeling_mamba2 import MambaRMSNormGated
-import torch
-
-torch.manual_seed(1234)
 
 
-def init_hidden_state(hidden_size: tuple[int, ...] = (8, 16)) -> torch.Tensor:
-    return torch.rand(hidden_size)
-
-
-def rmsnorm_gated_test():
+def test_rmsnorm_gated(RTOL, init_pt_tensor):
     hidden_size = (8, 16)
-    hidden_state = init_hidden_state(hidden_size=hidden_size)
+    hidden_state = init_pt_tensor(size=hidden_size)
+
+    # PyTorch implementation
     pt_rms_gated = MambaRMSNormGated(hidden_size=hidden_size)
     pt_output = pt_rms_gated.forward(hidden_state).detach().numpy()
-    max_output = max_rms_gated(hidden_state=hidden_state.numpy())
-    assert np.allclose(pt_output, max_output)
-    print("Passed Test")
+
+    # MAX implementation
+    max_output = get_max_rms_gated(hidden_state=hidden_state.numpy())
+
+    np.testing.assert_allclose(pt_output, max_output, rtol=RTOL)
 
 
-def max_rms_gated(hidden_state: np.ndarray) -> np.ndarray:
+def get_max_rms_gated(hidden_state: np.ndarray) -> np.ndarray:
     hidden_size = tuple(hidden_state.shape)
     max_rms_gated = Graph(
         "rmsnorm_gated",
@@ -36,10 +32,4 @@ def max_rms_gated(hidden_state: np.ndarray) -> np.ndarray:
     model = session.load(
         max_rms_gated, weights_registry={"weight": np.ones_like(hidden_state)}
     )
-    ret = model.execute(hidden_state)[0]
-    ret_max = ret.to_numpy()
-    return ret_max
-
-
-if __name__ == "__main__":
-    rmsnorm_gated_test()
+    return model.execute(hidden_state)[0].to_numpy()

@@ -16,11 +16,18 @@ platforms = ["osx-arm64"]
 [tool.pixi.pypi-dependencies]
 max_mamba = { path = ".", editable = true }
 
-[tool.pixi.tasks]
-test_rmsnorm_gated = "python3 tests/test_rmsnorm_gated.py"
 
 [tool.pixi.dependencies]
 max = ">=25.2.0.dev2025031505,<26"
 transformers = ">=4.49.0,<5"
 pytorch = ">=2.6.0,<3"
 pillow = ">=11.1.0,<12"
+
+[tool.pixi.feature.test.dependencies]
+pytest = "*"
+
+[tool.pixi.feature.test.tasks]
+test = "pytest"
+
+[tool.pixi.environments]
+test = ["test"]
