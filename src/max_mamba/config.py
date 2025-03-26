@@ -46,7 +46,6 @@ class MambaConfigBase(MAXModelConfigBase):
     logits_postprocessor: Callable[[TensorValue], TensorValue] | None = None
     all_logits: bool = True
     norm_method: Literal["rms_norm_gated"] = "rms_norm_gated"
-    rms_norm_eps: Optional[float] = 1e-6
     devices: list[DeviceRef] | None = None
 
     @staticmethod

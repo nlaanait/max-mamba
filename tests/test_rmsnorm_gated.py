@@ -1,4 +1,4 @@
-from max import engine
+from max.engine.api import InferenceSession
 from max.dtype import DType
 from max.graph import Graph, TensorType
 from max_mamba.layers import RMSNormGated
@@ -32,7 +32,7 @@ def max_rms_gated(hidden_state: np.ndarray) -> np.ndarray:
         input_types=[TensorType(DType.float32, hidden_size)],
     )
 
-    session = engine.InferenceSession()
+    session = InferenceSession()
     model = session.load(
         max_rms_gated, weights_registry={"weight": np.ones_like(hidden_state)}
     )

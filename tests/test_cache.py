@@ -132,12 +132,12 @@ def max_cache(
         conv_state, ssm_state = cache_graph.inputs
         cache = Mamba2Cache(config=config, batch_size=batch_size)
         conv_state_pre_init = cache.update_conv_state(
-            layer_idx=layer_idx, new_conv_state=conv_state, cache_init=True
+            layer_idx=layer_idx, new_conv_state=conv_state, cache_init=True  # type: ignore
         )
         conv_state_post_init = cache.update_conv_state(
-            layer_idx=layer_idx, new_conv_state=conv_state, cache_init=False
+            layer_idx=layer_idx, new_conv_state=conv_state, cache_init=False  # type: ignore
         )
-        ssm_state = cache.update_ssm_state(layer_idx=layer_idx, new_ssm_state=ssm_state)
+        ssm_state = cache.update_ssm_state(layer_idx=layer_idx, new_ssm_state=ssm_state)  # type: ignore
         cache.reset()
         cache_graph.output(conv_state_pre_init, conv_state_post_init, ssm_state)
 

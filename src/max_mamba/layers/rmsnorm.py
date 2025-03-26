@@ -1,6 +1,4 @@
-from dataclasses import dataclass
 from typing import Optional
-import numpy as np
 from max.dtype import DType
 from max.graph import TensorValue, ops, Weight
 
