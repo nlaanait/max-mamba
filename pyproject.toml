@@ -22,6 +22,8 @@ max = ">=25.2.0.dev2025031505,<26"
 transformers = ">=4.49.0,<5"
 pytorch = ">=2.6.0,<3"
 pillow = ">=11.1.0,<12"
+protobuf = ">=5.29.3,<6"
+grpcio = ">=1.71.0,<2"
 
 [tool.pixi.feature.test.dependencies]
 pytest = "*"
