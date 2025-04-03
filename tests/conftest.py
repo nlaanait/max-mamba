@@ -37,3 +37,4 @@ def mamba2_configs():
 @pytest.fixture
 def RTOL():
     return 1e-6
+    

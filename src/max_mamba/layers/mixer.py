@@ -21,6 +21,40 @@ def apply_mask_to_padding_states(
     return hidden_states
 
 
+def pad_tensor(
+    x: TensorValue, pad: tuple, value=0, mode: str = "constant"
+) -> TensorValue:
+    if mode != "constant":
+        raise NotImplementedError("mode != 'constant' not implemented.")
+
+    # store pad dimensions, starting from last axis
+    pad_dim = {
+        -1 - idx // 2: [pad[idx], pad[idx + 1]] for idx in range(0, len(pad) - 1, 2)
+    }
+
+    for dim, val in pad_dim.items():
+        if sum(val) < 1:
+            continue
+
+        # compute shapes
+        pad_shape_left = list(x.shape)
+        pad_shape_right = list(x.shape)
+        pad_shape_left[dim] = val[0]
+        pad_shape_right[dim] = val[1]
+        pad_shape_left = [int(itm) for itm in pad_shape_left]
+        pad_shape_right = [int(itm) for itm in pad_shape_right]
+
+        # Create padding arrays
+        pad_left = ops.constant(
+            value=np.full(shape=pad_shape_left, fill_value=value), dtype=x.dtype
+        )
+        pad_right = ops.constant(
+            value=np.full(shape=pad_shape_right, fill_value=value), dtype=x.dtype
+        )
+        x = ops.concat([pad_left, x, pad_right], axis=dim)
+    return x
+
+
 class Mamba2Mixer(nn.Module):
     """
     Compute ∆, A, B, C, and D the state space parameters and compute the `contextualized_states`.
@@ -148,5 +182,32 @@ class Mamba2Mixer(nn.Module):
             # Initialize Cache
             if cache_params is not None:
                 hidden_states_B_C_T = hidden_states_B_C.transpose(1, 2)
+                conv_states = pad_tensor(
+                    hidden_states_B_C_T,
+                    (cache_params.conv_kernel_size - hidden_states_B_C_T.shape[-1], 0),
+                )
+                cache_params.update_conv_state(
+                    layer_idx=self.layer_idx,
+                    new_conv_state=conv_states,
+                    cache_init=True,
+                )
+            hidden_states_B_C = self.act(
+                self.conv1d(hidden_states_B_C.transpose(1, 2))[..., :seq_len].transpose(
+                    1, 2
+                )
+            )
+        hidden_states_B_C = apply_mask_to_padding_states(
+            hidden_states_B_C, attention_mask
+        )
+        hidden_states, B, C = ops.split(
+            hidden_states_B_C,
+            [
+                self.intermediate_size,
+                self.n_groups * self.ssm_state_size,
+                self.n_groups * self.ssm_state_size,
+            ],
+            axis=-1,
+        )
 
-        return hidden_states_B_C
+        # 3. SSM Transformation
+        return hidden_states
