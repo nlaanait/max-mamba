@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from max.engine.api import InferenceSession
 from max.graph import Graph, TensorType
 from max.dtype import DType
-from max_mamba.layers.mixer import pad_tensor
+from max_mamba.ops import pad_tensor
 
 
 def get_max_pad_result(

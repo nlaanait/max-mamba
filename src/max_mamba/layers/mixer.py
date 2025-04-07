@@ -5,6 +5,8 @@ from max import nn
 from max.graph import ops, Weight, TensorValue
 import numpy as np
 
+from max_mamba.ops import pad_tensor, softplus
+
 
 def apply_mask_to_padding_states(
     hidden_states: TensorValue, attention_mask: TensorValue | None
@@ -19,40 +21,6 @@ def apply_mask_to_padding_states(
         hidden_states = ops.mul(hidden_states, attention_mask)
 
     return hidden_states
-
-
-def pad_tensor(
-    x: TensorValue, pad: tuple, value=0, mode: str = "constant"
-) -> TensorValue:
-    if mode != "constant":
-        raise NotImplementedError("mode != 'constant' not implemented.")
-
-    # store pad dimensions, starting from last axis
-    pad_dim = {
-        -1 - idx // 2: [pad[idx], pad[idx + 1]] for idx in range(0, len(pad) - 1, 2)
-    }
-
-    for dim, val in pad_dim.items():
-        if sum(val) < 1:
-            continue
-
-        # compute shapes
-        pad_shape_left = list(x.shape)
-        pad_shape_right = list(x.shape)
-        pad_shape_left[dim] = val[0]
-        pad_shape_right[dim] = val[1]
-        pad_shape_left = [int(itm) for itm in pad_shape_left]
-        pad_shape_right = [int(itm) for itm in pad_shape_right]
-
-        # Create padding arrays
-        pad_left = ops.constant(
-            value=np.full(shape=pad_shape_left, fill_value=value), dtype=x.dtype
-        )
-        pad_right = ops.constant(
-            value=np.full(shape=pad_shape_right, fill_value=value), dtype=x.dtype
-        )
-        x = ops.concat([pad_left, x, pad_right], axis=dim)
-    return x
 
 
 class Mamba2Mixer(nn.Module):
@@ -75,6 +43,7 @@ class Mamba2Mixer(nn.Module):
         self.use_conv_bias = config.use_conv_bias
         self.activation = config.hidden_act
         self.act = ops.silu
+        self.dtype = config.dtype
 
         self.layer_norm_epsilon = config.layer_norm_epsilon
         self.rms_norm = config.rms_norm
@@ -136,7 +105,7 @@ class Mamba2Mixer(nn.Module):
         cache_position: Optional[int] = None,
         attention_mask: Optional[TensorValue] = None,
     ):
-        # This implements torch_forward in Transformer.Mamba2Mixer
+        # This ports torch_forward in Transformer.Mamba2Mixer
         batch_size, seq_len, _ = input_states.shape
         dtype = input_states.dtype
 
@@ -210,4 +179,24 @@ class Mamba2Mixer(nn.Module):
         )
 
         # 3. SSM Transformation
-        return hidden_states
+        A = -ops.exp(self.A_log)  # [num_heads]
+        if (
+            cache_params is not None
+            and cache_position is not None
+            and cache_position > 0
+        ):
+            cache_device = cache_params.ssm_states.device
+
+            # Note: there is no need to pad parameter matrices here, as there is just one new token
+            # for batched generation
+            dt = dt[:, 0, :][:, None, ...]
+            dt = dt.transpose(1, 2).broadcast_to(
+                (batch_size, list(dt.shape)[-1], self.head_dim)
+            )
+            # [num_heads] -> [num_heads, head_dim]
+            dt_bias = self.dt_bias[..., None].broadcast_to(
+                (self.dt_bias.shape[0], self.head_dim)
+            )
+
+            dt = softplus(dt + dt_bias)
+            ops.masked_scatter
