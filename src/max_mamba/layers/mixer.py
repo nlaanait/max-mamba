@@ -2,10 +2,12 @@ from typing import Optional
 from max_mamba import Mamba2Config
 from max_mamba.layers import RMSNormGated, Conv1d, Mamba2Cache
 from max import nn
+from max.dtype import DType
 from max.graph import ops, Weight, TensorValue
+
 import numpy as np
 
-from max_mamba.ops import pad_tensor, softplus
+from max_mamba.ops import pad_tensor, softplus, clamp_tensor
 
 
 def apply_mask_to_padding_states(
@@ -199,4 +201,84 @@ class Mamba2Mixer(nn.Module):
             )
 
             dt = softplus(dt + dt_bias)
-            ops.masked_scatter
+            dt = clamp_tensor(dt, self.time_step_limit[0], self.time_step_limit[1])
+            A = A[..., None, None].broadcast_to(
+                (self.num_heads, self.head_dim, self.ssm_state_size)
+            )
+            # [bsz, num_heads, head_dim, state_size]
+            dA = ops.exp(dt[..., None] * A)
+
+            # Discretize B
+            # [bsz, n_groups * state_size] -> [bsz, n_groups, 1, state_size] ->
+            # -> [bsz, n_groups, group to head repetition factor, state_size] -> [bsz, num_heads, state_size]
+            B = B.reshape((batch_size, self.n_groups, -1))[..., None, :]
+            B = B.broadcast_to(
+                (
+                    batch_size,
+                    self.n_groups,
+                    self.num_heads // self.n_groups,
+                    B.shape[-1],
+                )
+            )
+            B = B.reshape((batch_size, -1, B.shape[-1]))
+            # [bsz, num_heads, head_dim, state_size]
+            dB = dt[..., None] * B[..., None, :]
+
+            # Discretize x into dB
+            # [bsz, intermediate_size] -> [bsz, num_heads, head_dim]
+            hidden_states = hidden_states.reshape((batch_size, -1, self.head_dim))
+            dBx = dB * hidden_states[..., None]
+
+            # State calculation
+            cache_params.update_ssm_state(
+                layer_idx=self.layer_idx,
+                new_ssm_state=cache_params.ssm_states[self.layer_idx] * dA + dBx,
+            )
+
+            # Subsequent output
+            # [bsz, n_groups * state_size] -> [bsz, num_heads, state_size]
+            C = C.reshape((batch_size, self.n_groups, -1))[..., None, :]
+            C = C.broadcast_to(
+                (
+                    batch_size,
+                    self.n_groups,
+                    self.num_heads // self.n_groups,
+                    C.shape[-1],
+                )
+            )
+            C = C.reshape((batch_size, -1, C.shape[-1]))
+            # [bsz, num_heads, head_dim]
+
+            ssm_states = cache_params.ssm_states[self.layer_idx]  # Shape: [b, h, d, n]
+            # Reshape ssm_states to merge the first two dimensions
+            ssm_states_reshaped = ssm_states.reshape(
+                (batch_size * self.num_heads, self.head_dim, self.ssm_state_size)
+            )  # Shape: [b*h, d, n]
+            C_reshaped = C.reshape(
+                (batch_size * self.num_heads, self.ssm_state_size, 1)
+            )  # Shape: [b*h, n, 1]
+            y = ops.matmul(ssm_states_reshaped, C_reshaped)
+            y = y.reshape((batch_size, self.num_heads, self.head_dim))
+
+            # D skip connect
+            # [num_heads] -> [num_heads, head_dim]
+            D = self.D[..., None].broadcast_to((list(self.D.shape)[0], self.head_dim))
+            y = y + hidden_states * D
+
+            # [bsz, num_heads, head_dim] -> [bsz, 1, intermediate_size]
+            y = y.reshape((batch_size, -1))[:, None, ...]
+        else:
+            # ssd implementation (can be done with einsums)
+            dt = softplus(dt + self.dt_bias)
+            dt = clamp_tensor(dt, self.time_step_limit[0], self.time_step_limit[1])
+            hidden_states = ops.cast(
+                hidden_states.reshape((batch_size, seq_len, -1, self.head_dim)),
+                DType.float32,
+            )
+            B = ops.cast(
+                B.reshape((batch_size, seq_len, -1, self.ssm_state_size)), DType.float32
+            )
+            C = ops.cast(
+                C.reshape((batch_size, seq_len, -1, self.ssm_state_size)), DType.float32
+            )
+            

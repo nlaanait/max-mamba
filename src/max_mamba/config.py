@@ -5,12 +5,14 @@ from max.dtype import DType
 from max.graph import DeviceRef, TensorValue
 from max.graph.quantization import QuantizationConfig, QuantizationEncoding
 from max.pipelines.config import MAXModelConfig, PipelineConfig
-from max.pipelines.max_config import MAXModelConfig, MAXModelConfigBase
+
+# from max.pipelines.max_config import MAXModelConfig, MAXModelConfigBase
+from max.pipelines.max_config import MAXConfig
 from transformers import Mamba2Config as HF_MAMBA2CFG
 
 
 @dataclass
-class MambaConfigBase(MAXModelConfigBase):
+class MambaConfigBase(MAXConfig):
     """Base configuration for Mamba models."""
 
     num_heads: int = 128
@@ -48,13 +50,12 @@ class MambaConfigBase(MAXModelConfigBase):
     norm_method: Literal["rms_norm_gated"] = "rms_norm_gated"
     devices: list[DeviceRef] | None = None
 
-    @staticmethod
-    def help() -> dict[str, str]:
+    def help(self) -> dict[str, str]:
         return {}
 
 
 @dataclass
-class Mamba2Config(MAXModelConfig, MambaConfigBase):
+class Mamba2Config(MambaConfigBase):
 
     # TODO: implement logic
     @staticmethod

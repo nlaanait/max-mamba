@@ -1,3 +1,4 @@
+from typing import Optional
 from max.graph import ops, TensorValue
 import numpy as np
 
@@ -37,4 +38,18 @@ def pad_tensor(
             value=np.full(shape=pad_shape_right, fill_value=value), dtype=x.dtype
         )
         x = ops.concat([pad_left, x, pad_right], axis=dim)
+    return x
+
+
+def clamp_tensor(
+    x: TensorValue, min_val: Optional[float], max_val: Optional[float]
+) -> TensorValue:
+    if min_val and max_val and min_val > max_val:
+        raise ValueError("min_val should be less or equal to max_val")
+    if not min_val and not max_val:
+        raise ValueError("One of 'min_val' or 'max_value' must not be None")
+    if min_val:
+        x = ops.select(x > min_val, x, min_val)
+    if max_val:
+        x = ops.select(x < max_val, x, max_val)
     return x
