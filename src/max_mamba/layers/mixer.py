@@ -281,4 +281,3 @@ class Mamba2Mixer(nn.Module):
             C = ops.cast(
                 C.reshape((batch_size, seq_len, -1, self.ssm_state_size)), DType.float32
             )
-            

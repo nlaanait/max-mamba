@@ -53,3 +53,32 @@ def clamp_tensor(
     if max_val:
         x = ops.select(x < max_val, x, max_val)
     return x
+
+
+def tile_tensor(x: TensorValue, dims: tuple) -> TensorValue:
+    """tile op. Follows pytorch's conventions.
+
+    Args:
+        x (TensorValue): input tensor
+        dims (tuple):
+
+    Returns:
+        (TensorValue): tiled tensor
+    """
+    while len(dims) < len(x.shape):
+        dims = (1,) + dims
+    while len(x.shape) < len(dims):
+        x = ops.unsqueeze(x, axis=0)
+    for idx, dim in enumerate(dims):
+        new_shape = (
+            (
+                tuple(x.shape)[0:idx]
+                + (tuple(x.shape)[idx] * dim,)
+                + tuple(x.shape)[idx + 1 :]
+            )
+            if idx != 0
+            else (tuple(x.shape)[idx] * dim,) + tuple(x.shape)[idx + 1 :]
+        )
+        if dim > 1:
+            x = ops.stack([x] * dim, axis=idx).reshape(new_shape)
+    return x
