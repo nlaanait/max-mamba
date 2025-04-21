@@ -1,13 +1,14 @@
-import pytest
 import numpy as np
+import pytest
 import torch
-from max.engine.api import InferenceSession
 from max.dtype import DType
+from max.engine.api import InferenceSession
 from max.graph import Graph, TensorType
-from max_mamba.layers import Mamba2Cache
-from max_mamba.config import Mamba2Config
-from transformers.models.mamba2.modeling_mamba2 import Mamba2Cache as HF_Mamba2Cache
 from transformers import Mamba2Config as HF_MAMBA2CFG
+from transformers.models.mamba2.modeling_mamba2 import Mamba2Cache as HF_Mamba2Cache
+
+from max_mamba.config import Mamba2Config
+from max_mamba.layers import Mamba2Cache
 
 torch.manual_seed(1234)
 

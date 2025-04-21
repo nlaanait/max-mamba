@@ -1,13 +1,15 @@
 from typing import Optional
+
 import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
+from conftest import RTOL, init_np_tensor
+from max.dtype import DType
 from max.engine.api import InferenceSession
 from max.graph import Graph, TensorType
-from max.dtype import DType
+
 from max_mamba.ops import clamp_tensor
-from conftest import RTOL, init_np_tensor
 
 
 def get_max_clamp_result(
@@ -36,7 +38,7 @@ def get_max_clamp_result(
         (0.5, 0.5),
     ],
 )
-def test_clamp_negative(RTOL, init_np_tensor, min_value, max_value):
+def test_clamp(RTOL, init_np_tensor, min_value, max_value):
     # Test parameters
     batch_size = 2
     seq_length = 3

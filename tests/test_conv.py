@@ -36,6 +36,44 @@ def torch_seed():
     np.random.seed(1234)
 
 
+def get_max_conv1d_result(
+    input_tensor: np.ndarray,
+    weight: np.ndarray,
+    bias: np.ndarray | None,
+    has_bias: bool,
+    in_channels: int,
+    out_channels: int,
+    kernel_size: int,
+    padding: int,
+    groups: int,
+) -> np.ndarray:
+    input_size = tuple(input_tensor.shape)
+    max_conv1d = Graph(
+        "conv1d",
+        Conv1d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            padding=padding,
+            dtype=DType.float32,
+            has_bias=has_bias,
+            groups=groups,
+        ),
+        input_types=[TensorType(DType.float32, input_size)],
+    )
+
+    session = InferenceSession()
+    model = session.load(
+        max_conv1d,
+        weights_registry={
+            "weight": weight,
+            "bias": bias,
+        },  # type: ignore
+    )
+    result = model.execute(input_tensor)[0]
+    return result.to_numpy()
+
+
 def test_conv1d(RTOL, init_np_tensor, init_w_and_b_tensors):
     # Test parameters
     in_channels = 4
@@ -84,42 +122,3 @@ def test_conv1d(RTOL, init_np_tensor, init_w_and_b_tensors):
     )
 
     np.testing.assert_allclose(pt_output, max_output, rtol=RTOL)
-
-
-# Helper function moved outside of test
-def get_max_conv1d_result(
-    input_tensor: np.ndarray,
-    weight: np.ndarray,
-    bias: np.ndarray | None,
-    has_bias: bool,
-    in_channels: int,
-    out_channels: int,
-    kernel_size: int,
-    padding: int,
-    groups: int,
-) -> np.ndarray:
-    input_size = tuple(input_tensor.shape)
-    max_conv1d = Graph(
-        "conv1d",
-        Conv1d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            padding=padding,
-            dtype=DType.float32,
-            has_bias=has_bias,
-            groups=groups,
-        ),
-        input_types=[TensorType(DType.float32, input_size)],
-    )
-
-    session = InferenceSession()
-    model = session.load(
-        max_conv1d,
-        weights_registry={
-            "weight": weight,
-            "bias": bias,
-        },  # type: ignore
-    )
-    result = model.execute(input_tensor)[0]
-    return result.to_numpy()

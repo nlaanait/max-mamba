@@ -1,9 +1,10 @@
 import numpy as np
-from max.engine.api import InferenceSession
 from max.dtype import DType
+from max.engine.api import InferenceSession
 from max.graph import Graph, TensorType
-from max_mamba.layers import RMSNormGated
 from transformers.models.mamba2.modeling_mamba2 import MambaRMSNormGated
+
+from max_mamba.layers import RMSNormGated
 
 
 def test_rmsnorm_gated(RTOL, init_pt_tensor):

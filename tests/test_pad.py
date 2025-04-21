@@ -2,9 +2,10 @@ import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
+from max.dtype import DType
 from max.engine.api import InferenceSession
 from max.graph import Graph, TensorType
-from max.dtype import DType
+
 from max_mamba.ops import pad_tensor
 
 
