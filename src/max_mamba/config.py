@@ -5,8 +5,6 @@ from max.dtype import DType
 from max.graph import DeviceRef, TensorValue
 from max.graph.quantization import QuantizationConfig, QuantizationEncoding
 from max.pipelines.config import MAXModelConfig, PipelineConfig
-
-# from max.pipelines.max_config import MAXModelConfig, MAXModelConfigBase
 from max.pipelines.max_config import MAXConfig
 from transformers import Mamba2Config as HF_MAMBA2CFG
 

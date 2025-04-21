@@ -1,7 +1,7 @@
 from typing import Optional
-from max.dtype import DType
-from max.graph import TensorValue, ops, Weight
 
+from max.dtype import DType
+from max.graph import TensorValue, Weight, ops
 from max.nn import Module
 
 

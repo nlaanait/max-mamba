@@ -1,6 +1,7 @@
 from typing import Optional
-from max.graph import ops, TensorValue
+
 import numpy as np
+from max.graph import TensorValue, ops
 
 
 def softplus(x: TensorValue) -> TensorValue:

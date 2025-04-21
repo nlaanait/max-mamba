@@ -1,6 +1,6 @@
 from max import nn
-from max.graph import Weight, DeviceRef, TensorValue, ops
 from max.dtype import DType
+from max.graph import DeviceRef, TensorValue, Weight
 
 
 class Conv1d(nn.Module):

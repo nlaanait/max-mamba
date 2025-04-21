@@ -1,7 +1,8 @@
-from max_mamba import Mamba2Config
-from max.dtype import DType
-from max.graph import ops, Weight, TensorValue
 import numpy as np
+from max.dtype import DType
+from max.graph import TensorValue, Weight, ops
+
+from max_mamba import Mamba2Config
 
 
 class Mamba2Cache:
@@ -11,7 +12,7 @@ class Mamba2Cache:
         batch_size: int
 
     Attributes:
-        dtype: (`torch.dtype`):
+        dtype: (`DType`):
             The default `dtype` used to initializing the cache.
         conv_kernel_size: (`int`):
             Model's convolution kernel size taken from config.
@@ -81,6 +82,7 @@ class Mamba2Cache:
                 self.head_dim,
                 self.state_size,
             ),
+            dtype=np.int8,
         )
 
     def update_conv_state(
