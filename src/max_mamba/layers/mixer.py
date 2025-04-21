@@ -1,13 +1,116 @@
 from typing import Optional
-from max_mamba import Mamba2Config
-from max_mamba.layers import RMSNormGated, Conv1d, Mamba2Cache
-from max import nn
-from max.dtype import DType
-from max.graph import ops, Weight, TensorValue
+from pathlib import Path
 
 import numpy as np
+from max import nn
+from max.dtype import DType
+from max.graph import TensorValue, ops
 
-from max_mamba.ops import pad_tensor, softplus, clamp_tensor
+from max_mamba import Mamba2Config
+from max_mamba.layers import Conv1d, Mamba2Cache, RMSNormGated
+from max_mamba.ops import clamp_tensor, pad_tensor, softplus, tile_tensor
+
+mojo_ops_path = Path(__file__).parent / "kernels"
+kernels = [
+    "selective_state_update.mojo",
+    "mamba_chunk_scan_combined.mojo",
+    "mamba_split_conv1d_scan_combined.mojo",
+    "causal_conv1d_fn.mojo",
+    "causal_conv1d_update.mojo",
+]
+CUSTOM_MOJO_OPS = all([(mojo_ops_path / kernel).exists() for kernel in kernels])
+
+
+def pad_tensor_by_size(input_tensor: TensorValue, pad_size: int) -> TensorValue:
+    """
+    Padding x tensor with `pad_size` on the seq_len dim (dim=1)
+
+    Assumes that we only have tensors of either size 4 or 3
+    """
+    pad_shape = (
+        (0, 0, 0, 0, 0, pad_size, 0, 0)
+        if len(input_tensor.shape) == 4
+        else (0, 0, 0, pad_size, 0, 0)
+    )
+
+    return pad_tensor(input_tensor, pad_shape, mode="constant", value=0)
+
+
+def reshape_into_chunks(
+    input_tensor: TensorValue, pad_size: int, chunk_size: int
+) -> TensorValue:
+    """
+    Padding input_tensor with `pad_size` on the seq_len dim (dim=1) and
+    simultaneously splitting it into chunk sequences.
+
+    Assumes that we only have tensors of either size 4 or 3
+    """
+    # [bsz, seq_len, ...] -> [bsz, seq_len multiple of chunk_size, ...]
+    input_tensor = pad_tensor_by_size(input_tensor, pad_size)
+
+    if len(input_tensor.shape) == 3:
+        # [bsz, seq_len multiple of chunk_size, num_heads] -> [bsz, -1, chunk_size, num_heads]
+        return input_tensor.reshape(
+            (input_tensor.shape[0], -1, chunk_size, input_tensor.shape[2])
+        )
+    else:
+        # [bsz, seq_len multiple of chunk_size, num_heads, head_dim or state_size] -> [bsz, -1, chunk_size, num_heads, head_dim or state_size]
+        return input_tensor.reshape(
+            (
+                input_tensor.shape[0],
+                -1,
+                chunk_size,
+                input_tensor.shape[2],
+                input_tensor.shape[3],
+            )
+        )
+
+
+def segment_sum(input_tensor: TensorValue) -> TensorValue:
+    """
+    More stable segment sum calculation. Uses cumulative sums and masking instead of direct subtractions.
+    """
+    chunk_size = input_tensor.shape[-1]
+
+    # 1. expand input tensor to have an additional dimension and repeat along that dimension
+    # [..., chunk_size] -> [..., chunk_size, chunk_size]
+    new_shape = tuple(input_tensor.shape) + (chunk_size,)
+    input_tensor = input_tensor[..., None].broadcast_to(new_shape)
+    # 2. create a lower triangular mask with the diagonal set to 0
+    mask = ops.constant(
+        ~np.tril(
+            np.ones(
+                (
+                    chunk_size,
+                    chunk_size,
+                ),
+                dtype=np.int8,
+            ),
+            -1,
+        ),
+        dtype=DType.bool,
+        device=input_tensor.device,
+    )
+    input_tensor = ops.masked_scatter(input_tensor, mask, 0)
+    # 3. compute actual cumsum
+    tensor_segsum = ops.cumsum(input_tensor, axis=-2)
+
+    # 4. apply mask to keep only the lower triangular part of the cumsum result (include diag)
+    mask = ops.constant(
+        ~np.tril(
+            np.ones(
+                (
+                    chunk_size,
+                    chunk_size,
+                ),
+                dtype=np.int8,
+            ),
+        ),
+        dtype=DType.bool,
+        device=input_tensor.device,
+    )
+    tensor_segsum = ops.masked_scatter(tensor_segsum, mask, float("-inf"))
+    return tensor_segsum
 
 
 def apply_mask_to_padding_states(
@@ -101,6 +204,29 @@ class Mamba2Mixer(nn.Module):
         self.use_bias = config.use_bias
 
     def __call__(
+        self,
+        hidden_states: TensorValue,
+        cache_params: Optional[Mamba2Cache] = None,
+        cache_position: Optional[int] = None,
+        attention_mask: Optional[TensorValue] = None,
+    ):
+        if CUSTOM_MOJO_OPS:
+            raise NotImplementedError
+        dtype = hidden_states.dtype
+        if (
+            attention_mask is not None
+            and int(attention_mask.shape[1]) > 1
+            and int(attention_mask.shape[0]) > 1
+        ):
+            # tune out hidden states for pad tokens, see https://github.com/state-spaces/mamba/issues/66
+            hidden_states = ops.cast(
+                hidden_states * attention_mask[:, :, None], dtype=dtype
+            )
+        return self.max_forward(
+            hidden_states, cache_params, cache_position, attention_mask
+        )
+
+    def max_forward(
         self,
         input_states: TensorValue,
         cache_params: Optional[Mamba2Cache] = None,
@@ -281,3 +407,115 @@ class Mamba2Mixer(nn.Module):
             C = ops.cast(
                 C.reshape((batch_size, seq_len, -1, self.ssm_state_size)), DType.float32
             )
+            B = tile_tensor(B, dims=(1, 1, self.num_heads // self.n_groups, 1))
+            C = tile_tensor(C, dims=(1, 1, self.num_heads // self.n_groups, 1))
+            pad_size = (
+                self.chunk_size - int(seq_len) % self.chunk_size
+            ) % self.chunk_size
+
+            D_residual = self.D[..., None] * pad_tensor_by_size(hidden_states, pad_size)
+
+            # Discretize x and A
+            hidden_states = hidden_states * dt[..., None]
+            A = ops.cast(A, hidden_states.dtype) * dt
+
+            # Rearrange into blocks/chunks
+            hidden_states, A, B, C = [
+                reshape_into_chunks(t, pad_size, self.chunk_size)
+                for t in (hidden_states, A, B, C)
+            ]
+
+            # [bsz, -1, chunk_size, num_heads] -> [bsz, num_heads, -1, chunk_size]
+            A = ops.permute(A, dims=[0, 3, 1, 2])
+            A_cumsum = ops.cumsum(A, axis=-1)
+
+            # 1. Compute the output for each intra-chunk (diagonal blocks)
+            # This is the analog of a causal mask
+            L = ops.exp(segment_sum(A))
+
+            # Contraction of C and B to get G (attention-weights like)
+            G_intermediate = (
+                C[:, :, :, None, :, :] * B[:, :, None, :, :, :]
+            )  # shape: (b, c, l, s, h, n)
+            G = ops.sum(G_intermediate, axis=-1)  # shape: (b, c, l, s, h)
+
+            # Compute M, equivalent to applying attention mask to weights
+            M_intermediate = (
+                G[..., None] * ops.permute(L, dims=[0, 2, 3, 4, 1])[..., None]
+            )
+            M = ops.sum(M_intermediate, axis=-1)
+
+            # Compute Y_diag (apply to values)
+            Y_diag = ops.sum(M[..., None] * hidden_states[:, :, None], axis=3)
+
+            # 2. Compute the state for each intra-chunk
+            # (right term of low-rank factorization of off-diagonal blocks; B terms)
+            decay_states = ops.exp(A_cumsum[:, :, :, -1:] - A_cumsum)
+            B_decay = B * ops.permute(decay_states, dims=[0, -2, -1, 1])[..., None]
+            states = ops.sum(B_decay[..., None, :] * hidden_states[..., None], axis=2)
+
+            # 3. Compute the inter-chunk SSM recurrence; produces correct SSM states at chunk boundaries
+            # (middle term of factorization of off-diag blocks; A terms)
+            if (
+                cache_params is not None
+                and cache_position is not None
+                and cache_position > 0
+            ):
+                previous_states = cache_params.ssm_states[self.layer_idx][
+                    :, None, ...
+                ]  # TODO: check device assignments of cache data
+            else:
+                previous_states = ops.constant(
+                    np.zeros(
+                        tuple(states[:, :1].shape),
+                        dtype=np.float32,  # TODO: remove fixed dtype
+                    ),
+                    dtype=states.dtype,
+                    device=states.device,
+                )
+            states = ops.concat([previous_states, states], axis=1)
+            decay_chunk = ops.exp(
+                segment_sum(pad_tensor(A_cumsum[:, :, :, -1], (1, 0)))
+            )
+            decay_chunk = decay_chunk.transpose(1, 3)
+            new_states = ops.sum(
+                (decay_chunk[..., None, None] * states[:, :, None, ...]), axis=1
+            )
+            states, ssm_state = new_states[:, :-1], new_states[:, -1]
+
+            # 4. Compute state -> output conversion per chunk
+            # (left term of low-rank factorization of off-diagonal blocks; C terms)
+            state_decay_out = ops.exp(A_cumsum)
+            C_times_states = C[..., None, :] * states[:, :, None, ...]
+            state_decay_out_permuted = ops.permute(state_decay_out, dims=[0, 2, 3, 1])
+            Y_off = (
+                ops.sum(C_times_states, axis=-1) * state_decay_out_permuted[..., None]
+            )
+
+            # Add output of intra-chunk and inter-chunk terms (diagonal and off-diagonal blocks)
+            y = Y_diag + Y_off
+            # [bsz, -1, self.chunk_size, num_heads, head_dim] -> [bsz, (padded) seq_len, num_heads, head_dim]
+            y = y.reshape((batch_size, -1, self.num_heads, self.head_dim))
+
+            y = y + D_residual
+            # Cutting off padded chunks
+            if pad_size > 0:
+                y = y[:, :seq_len, :, :]
+            y = y.reshape((batch_size, seq_len, -1))
+
+            # Initialize Cache
+            if ssm_state is not None and cache_params is not None:
+                cache_params.update_ssm_state(
+                    layer_idx=self.layer_idx, new_ssm_state=ssm_state
+                )
+
+        scan_output = self.norm(y, gate)
+
+        # end ssd naive
+
+        # 4. Final linear projection
+        contextualized_states = self.out_proj(
+            scan_output
+        )  # [batch, seq_len, hidden_size]
+
+        return contextualized_states
