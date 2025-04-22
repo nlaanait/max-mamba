@@ -83,3 +83,25 @@ def tile_tensor(x: TensorValue, dims: tuple) -> TensorValue:
         if dim > 1:
             x = ops.stack([x] * dim, axis=idx).reshape(new_shape)
     return x
+
+
+def roll_tensor(
+    x: TensorValue, shifts: tuple[int] | int, dims: tuple[int] | int
+) -> TensorValue:
+    if isinstance(shifts, int):
+        shifts = (shifts,)
+    if isinstance(dims, int):
+        dims = (dims,)
+    if len(shifts) != len(dims):
+        raise ValueError("len(shifts) != len(dims)")
+    if len(dims) > len(x.shape):
+        raise ValueError("len(dims) cannot be greater than len(x.shape)")
+    for shift, dim in zip(shifts, dims):
+        shift = shift % int(x.shape[dim])
+        x = x.transpose(dim_1=0, dim_2=dim)
+        if shift > 0:
+            x = ops.concat([x[-shift:, ...], x[:-shift, ...]], axis=0)
+        else:
+            x = ops.concat([x[shift:], x[:shift]], axis=0)
+        x = x.transpose(dim_1=dim, dim_2=0)
+    return x
