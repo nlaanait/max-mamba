@@ -41,17 +41,18 @@ def get_hf_cache_results(
     pt_cache_state_pre_init = pt_cache.update_conv_state(
         layer_idx=layer_idx, new_conv_state=new_conv_state, cache_init=True
     )
-    # TODO: re-enable after resolving the assigment issue in Transformers
-    # pt_cache_state_post_init = pt_cache.update_conv_state(
-    #     layer_idx=layer_idx, new_conv_state=pt_cache_state_pre_init, cache_init=False
-    # )
+    pt_cache_state_post_init = pt_cache.update_conv_state(
+        layer_idx=layer_idx - 1,
+        new_conv_state=torch.transpose(pt_cache_state_pre_init, 1, 2).contiguous(),
+        cache_init=False,
+    )
     pt_cache_ssm_state = pt_cache.update_ssm_state(
         layer_idx=layer_idx, new_ssm_state=new_ssm_state
     )
 
     return (
         pt_cache_state_pre_init.numpy(),
-        pt_cache_state_pre_init.numpy(),
+        pt_cache_state_post_init.numpy(),
         pt_cache_ssm_state.numpy(),
     )
 
@@ -87,10 +88,9 @@ def get_max_cache_results(
             layer_idx=layer_idx, new_conv_state=conv_state, cache_init=True  # type: ignore
         )
         conv_state_post_init = cache.update_conv_state(
-            layer_idx=layer_idx, new_conv_state=conv_state, cache_init=False  # type: ignore
+            layer_idx=layer_idx - 1, new_conv_state=conv_state_pre_init.transpose(1, 2), cache_init=False  # type: ignore
         )
         ssm_state = cache.update_ssm_state(layer_idx=layer_idx, new_ssm_state=ssm_state)  # type: ignore
-        cache.reset()
         cache_graph.output(conv_state_pre_init, conv_state_post_init, ssm_state)
 
     sess = InferenceSession()
@@ -107,7 +107,7 @@ def get_max_cache_results(
     )
     return (
         conv_state_pre_init.to_numpy(),
-        conv_state_pre_init.to_numpy(),
+        conv_state_post_init.to_numpy(),
         ssm_state.to_numpy(),
     )
 
@@ -115,7 +115,6 @@ def get_max_cache_results(
 def test_cache(RTOL, init_np_tensor, mamba2_configs):
     max_config, hf_config = mamba2_configs
     batch_size = 1
-
     # Initialize test data
     conv_state_size = (
         batch_size,
@@ -137,7 +136,7 @@ def test_cache(RTOL, init_np_tensor, mamba2_configs):
     pt_ssm_state = torch.from_numpy(ssm_state)
 
     # Get results from both implementations
-    pt_results = get_hf_cache_results(
+    conv_init_pt, conv_post_pt, ssm_pt = get_hf_cache_results(
         batch_size=batch_size,
         config=hf_config,
         new_conv_state=pt_conv_state,
@@ -145,7 +144,7 @@ def test_cache(RTOL, init_np_tensor, mamba2_configs):
         layer_idx=layer_idx,
     )
 
-    max_results = get_max_cache_results(
+    conv_init_max, conv_post_max, ssm_max = get_max_cache_results(
         batch_size=batch_size,
         config=max_config,
         new_conv_state=conv_state,
@@ -154,5 +153,6 @@ def test_cache(RTOL, init_np_tensor, mamba2_configs):
     )
 
     # Compare results
-    for pt_result, max_result in zip(pt_results, max_results):
-        np.testing.assert_allclose(pt_result, max_result, rtol=RTOL)
+    np.testing.assert_allclose(conv_init_pt, conv_init_max, rtol=RTOL)
+    np.testing.assert_allclose(conv_post_pt, conv_post_max, rtol=RTOL)
+    np.testing.assert_allclose(ssm_pt, ssm_max, rtol=RTOL)
