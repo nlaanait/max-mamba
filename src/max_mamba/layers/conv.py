@@ -22,7 +22,8 @@ class Conv1d(nn.Module):
         dtype: DType | None = None,
     ):
         super().__init__()
-        self.device = device
+        self.device = device if device else DeviceRef.CPU()
+        self.dtype = dtype if dtype else DType.float32
         weight_shape = (
             kernel_size,
             int(in_channels / groups),
@@ -30,18 +31,18 @@ class Conv1d(nn.Module):
         )
         self.weight = Weight(
             name=f"{name}.weight" if name else "weight",
-            dtype=dtype,
+            dtype=self.dtype,
             shape=weight_shape,
-            device=DeviceRef.CPU() if self.device else None,
+            device=self.device,
         )
 
         if has_bias:
             bias_shape = (out_channels,)
             self.bias = Weight(
                 name=f"{name}.bias" if name else "bias",
-                dtype=dtype,
+                dtype=self.dtype,
                 shape=bias_shape,
-                device=DeviceRef.CPU() if self.device else None,
+                device=self.device,
             )
         else:
             self.bias = None

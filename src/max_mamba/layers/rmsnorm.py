@@ -1,7 +1,7 @@
 from typing import Optional
 
 from max.dtype import DType
-from max.graph import TensorValue, Weight, ops
+from max.graph import DeviceRef, TensorValue, Weight, ops
 from max.nn import Module
 
 
@@ -10,13 +10,15 @@ class RMSNormGated(Module):
         self,
         hidden_size: tuple[int, ...],
         eps: float = 1e-6,
-        dtype: DType = DType.bfloat16,
+        dtype: DType | None = None,
+        device: DeviceRef | None = None,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.eps = eps
-        self.dtype = dtype
-        self.weight = Weight("weight", self.dtype, self.hidden_size)
+        self.device = device if device else DeviceRef.CPU()
+        self.dtype = dtype if dtype else DType.float32
+        self.weight = Weight("weight", self.dtype, self.hidden_size, device=self.device)
 
     def __call__(  # type: ignore
         self, h: TensorValue, gate: Optional[TensorValue] = None
