@@ -1,10 +1,11 @@
+import math
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 from max import nn
 from max.dtype import DType
-from max.graph import TensorValue, ops
+from max.graph import DeviceRef, TensorValue, Weight, ops
 
 from max_mamba import Mamba2Config
 from max_mamba.layers import Conv1d, Mamba2Cache, RMSNormGated
@@ -128,6 +129,21 @@ def apply_mask_to_padding_states(
     return hidden_states
 
 
+def mamba2_mixer_initializer(config: Mamba2Config):
+    dt = np.exp(
+        np.random.rand(config.num_heads)
+        * (math.log(config.time_step_max) - np.log(config.time_step_min))
+        + math.log(config.time_step_min)
+    ).clip(min=config.time_step_floor)
+
+    inv_dt = dt + np.log(-np.expm1(-dt))
+    return {
+        "A": np.arange(1, config.num_heads),
+        "dt_bias": inv_dt,
+        "D": np.ones(config.num_heads),
+    }
+
+
 class Mamba2Mixer(nn.Module):
     """
     Compute ∆, A, B, C, and D the state space parameters and compute the `contextualized_states`.
@@ -143,12 +159,13 @@ class Mamba2Mixer(nn.Module):
         self.ssm_state_size = config.state_size
         self.conv_kernel_size = config.conv_kernel
         self.intermediate_size = int(config.expand * self.hidden_size)
-        self.time_step_rank = int(config.time_step_rank)
+        self.time_step_rank = config.time_step_rank
         self.layer_idx = layer_idx
         self.use_conv_bias = config.use_conv_bias
         self.activation = config.hidden_act
         self.act = ops.silu
         self.dtype = config.dtype
+        self.device = config.devices[0] if config.devices else DeviceRef.CPU()
 
         self.layer_norm_epsilon = config.layer_norm_epsilon
         self.rms_norm = config.rms_norm
@@ -170,6 +187,7 @@ class Mamba2Mixer(nn.Module):
             groups=self.n_groups,
             padding=config.conv_kernel - 1,
             dtype=config.dtype,
+            name="conv1d",
         )
 
         # projection of the input hidden states
@@ -184,16 +202,15 @@ class Mamba2Mixer(nn.Module):
 
         # time step projection (discretization)
         # instantiate once and copy inv_dt in init_weights of PretrainedModel
-        self.dt_bias = ops.constant(np.ones(self.num_heads), dtype=config.dtype)
+        self.dt_bias = Weight("dt_bias", config.dtype, (self.num_heads,), self.device)
 
         # S4D real initialization. These are not discretized!
         # The core is to load them, compute the discrete states, then write the updated state. Keeps the memory bounded
-        A = ops.constant(np.arange(1, self.num_heads), dtype=config.dtype)
-        self.A_log = ops.log(A)
+        self.A = Weight("A", config.dtype, (self.num_heads,), self.device)
         self.norm = RMSNormGated(
             (self.intermediate_size,), eps=config.layer_norm_epsilon
         )
-        self.D = ops.constant(np.ones(self.num_heads), dtype=config.dtype)
+        self.D = Weight("D", config.dtype, (self.num_heads,), self.device)
 
         self.out_proj = nn.LinearV2(
             self.intermediate_size,
@@ -233,6 +250,7 @@ class Mamba2Mixer(nn.Module):
         cache_position: Optional[int] = None,
         attention_mask: Optional[TensorValue] = None,
     ):
+        self.A_log = ops.log(self.A)
         # This ports torch_forward in Transformer.Mamba2Mixer
         batch_size, seq_len, _ = input_states.shape
         dtype = input_states.dtype
@@ -268,10 +286,11 @@ class Mamba2Mixer(nn.Module):
             conv_states = cache_params.conv_states[self.layer_idx].to(
                 device=input_states.device.CPU() if input_states.device else None,
             )
+            hidden_states_B_C = ops.sum(conv_states, axis=-1)
 
-            hidden_states_B_C = ops.sum(
-                conv_states * ops.squeeze(self.conv1d.weight, axis=1), axis=-1
-            )
+            # hidden_states_B_C = ops.sum(
+            #     conv_states * ops.squeeze(self.conv1d.weight, axis=1), axis=-1
+            # )
             if self.use_conv_bias:
                 hidden_states_B_C = ops.add(hidden_states_B_C, self.conv1d.bias)
             hidden_states_B_C = self.act(hidden_states_B_C)
