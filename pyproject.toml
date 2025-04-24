@@ -28,8 +28,12 @@ grpcio = ">=1.71.0,<2"
 [tool.pixi.feature.test.dependencies]
 pytest = "*"
 
+[tool.pixi.feature.dev.dependencies]
+ipykernel = "*"
+
 [tool.pixi.feature.test.tasks]
 test = "pytest"
 
 [tool.pixi.environments]
 test = ["test"]
+dev = ["dev"]
