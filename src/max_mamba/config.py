@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from typing import Callable, Literal, Optional
 
 from max.dtype import DType
@@ -29,7 +30,7 @@ class MambaConfigBase(MAXConfig):
     hidden_act: str = "silu"
     initializer_range: float = 0.1
     residual_in_fp32: bool = True
-    time_step_rank: str = "auto"
+    time_step_rank: int | str = "auto"
     time_step_min: float = 0.001
     time_step_max: float = 0.1
     time_step_floor: float = 1e-4
@@ -39,7 +40,6 @@ class MambaConfigBase(MAXConfig):
     rms_norm: bool = True
     chunk_size: int = 256
     tie_word_embeddings: bool = False
-    # dtype: DType = DType.bfloat16
     dtype: DType = DType.float32
     model_quantization_encoding: Optional[QuantizationEncoding] = None
     quantization_config: Optional[QuantizationConfig] = None
@@ -47,6 +47,13 @@ class MambaConfigBase(MAXConfig):
     all_logits: bool = True
     norm_method: Literal["rms_norm_gated"] = "rms_norm_gated"
     devices: list[DeviceRef] | None = None
+
+    def __post_init__(self):
+        self.time_step_rank = (
+            math.ceil(self.hidden_size / 16)
+            if self.time_step_rank == "auto"
+            else self.time_step_rank
+        )
 
     def help(self) -> dict[str, str]:
         return {}
