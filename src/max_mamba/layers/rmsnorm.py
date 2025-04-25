@@ -12,13 +12,19 @@ class RMSNormGated(Module):
         eps: float = 1e-6,
         dtype: DType | None = None,
         device: DeviceRef | None = None,
+        name: str | None = None,
     ):
         super().__init__()
         self.hidden_size = hidden_size
         self.eps = eps
         self.device = device if device else DeviceRef.CPU()
         self.dtype = dtype if dtype else DType.float32
-        self.weight = Weight("weight", self.dtype, self.hidden_size, device=self.device)
+        self.weight = Weight(
+            f"{name}.Weight" if name else "Weight",
+            self.dtype,
+            self.hidden_size,
+            device=self.device,
+        )
 
     def __call__(  # type: ignore
         self, h: TensorValue, gate: Optional[TensorValue] = None

@@ -223,7 +223,7 @@ class Mamba2Mixer(nn.Module):
         # The core is to load them, compute the discrete states, then write the updated state. Keeps the memory bounded
         self.A = Weight("A", config.dtype, (self.num_heads,), self.device)
         self.norm = RMSNormGated(
-            (self.intermediate_size,), eps=config.layer_norm_epsilon
+            (self.intermediate_size,), eps=config.layer_norm_epsilon, name="rmsnorm"
         )
         self.D = Weight("D", config.dtype, (self.num_heads,), self.device)
 
@@ -232,6 +232,7 @@ class Mamba2Mixer(nn.Module):
             self.hidden_size,
             dtype=config.dtype,
             has_bias=config.use_bias,
+            name="out_proj",
         )
         self.use_bias = config.use_bias
 
