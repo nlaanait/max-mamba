@@ -71,46 +71,61 @@ def segment_sum(input_tensor: TensorValue) -> TensorValue:
     """
     More stable segment sum calculation. Uses cumulative sums and masking instead of direct subtractions.
     """
-    chunk_size = input_tensor.shape[-1]
+    chunk_size = int(input_tensor.shape[-1])
 
     # 1. expand input tensor to have an additional dimension and repeat along that dimension
     # [..., chunk_size] -> [..., chunk_size, chunk_size]
     new_shape = tuple(input_tensor.shape) + (chunk_size,)
     input_tensor = input_tensor[..., None].broadcast_to(new_shape)
     # 2. create a lower triangular mask with the diagonal set to 0
-    mask = ops.constant(
-        ~np.tril(
-            np.ones(
-                (
-                    chunk_size,
-                    chunk_size,
-                ),
-                dtype=np.int8,
+    mask_ = ~np.tril(
+        np.ones(
+            (
+                chunk_size,
+                chunk_size,
             ),
-            -1,
+            dtype=np.int8,
         ),
+        -1,
+    ).astype(np.bool_)
+
+    mask = ops.constant(
+        mask_,
         dtype=DType.bool,
         device=input_tensor.device,
     )
-    input_tensor = ops.masked_scatter(input_tensor, mask, 0)
+    zeros = ops.constant(
+        np.zeros(tuple(int(s) for s in input_tensor.shape), dtype=np.float32),
+        dtype=input_tensor.dtype,
+        device=input_tensor.device,
+    )
+    input_tensor = ops.masked_scatter(input_tensor, mask, zeros)
     # 3. compute actual cumsum
     tensor_segsum = ops.cumsum(input_tensor, axis=-2)
 
     # 4. apply mask to keep only the lower triangular part of the cumsum result (include diag)
-    mask = ops.constant(
-        ~np.tril(
-            np.ones(
-                (
-                    chunk_size,
-                    chunk_size,
-                ),
-                dtype=np.int8,
+    mask_ = ~np.tril(
+        np.ones(
+            (
+                chunk_size,
+                chunk_size,
             ),
+            dtype=np.int8,
         ),
+    ).astype(np.bool_)
+    mask = ops.constant(
+        mask_,
         dtype=DType.bool,
         device=input_tensor.device,
     )
-    tensor_segsum = ops.masked_scatter(tensor_segsum, mask, float("-inf"))
+    infs = ops.constant(
+        np.full(
+            tuple(int(s) for s in input_tensor.shape), float("-inf"), dtype=np.float32
+        ),
+        dtype=input_tensor.dtype,
+        device=input_tensor.device,
+    )
+    tensor_segsum = ops.masked_scatter(tensor_segsum, mask, infs)
     return tensor_segsum
 
 
@@ -286,11 +301,9 @@ class Mamba2Mixer(nn.Module):
             conv_states = cache_params.conv_states[self.layer_idx].to(
                 device=input_states.device.CPU() if input_states.device else None,
             )
-            hidden_states_B_C = ops.sum(conv_states, axis=-1)
-
-            # hidden_states_B_C = ops.sum(
-            #     conv_states * ops.squeeze(self.conv1d.weight, axis=1), axis=-1
-            # )
+            hidden_states_B_C = ops.sum(
+                conv_states * ops.squeeze(self.conv1d.weight, axis=1), axis=-1
+            )
             if self.use_conv_bias:
                 hidden_states_B_C = ops.add(hidden_states_B_C, self.conv1d.bias)
             hidden_states_B_C = self.act(hidden_states_B_C)
@@ -307,11 +320,7 @@ class Mamba2Mixer(nn.Module):
                     new_conv_state=conv_states,
                     cache_init=True,
                 )
-            hidden_states_B_C = self.act(
-                self.conv1d(hidden_states_B_C.transpose(1, 2))[..., :seq_len].transpose(
-                    1, 2
-                )
-            )
+            hidden_states_B_C = self.act(self.conv1d(hidden_states_B_C)[:, :seq_len, :])
         hidden_states_B_C = apply_mask_to_padding_states(
             hidden_states_B_C, attention_mask
         )
@@ -456,22 +465,27 @@ class Mamba2Mixer(nn.Module):
             G_intermediate = (
                 C[:, :, :, None, :, :] * B[:, :, None, :, :, :]
             )  # shape: (b, c, l, s, h, n)
-            G = ops.sum(G_intermediate, axis=-1)  # shape: (b, c, l, s, h)
+            G = ops.squeeze(
+                ops.sum(G_intermediate, axis=-1), axis=-1
+            )  # shape: (b, c, l, s, h)
 
             # Compute M, equivalent to applying attention mask to weights
-            M_intermediate = (
-                G[..., None] * ops.permute(L, dims=[0, 2, 3, 4, 1])[..., None]
-            )
-            M = ops.sum(M_intermediate, axis=-1)
+            M_intermediate = G[..., None] * L.permute(dims=[0, 2, 3, 4, 1])[..., None]
+            M = ops.squeeze(ops.sum(M_intermediate, axis=-1), axis=-1)
 
             # Compute Y_diag (apply to values)
-            Y_diag = ops.sum(M[..., None] * hidden_states[:, :, None], axis=3)
+            Y_diag = ops.squeeze(
+                ops.sum(M[..., None] * hidden_states[:, :, None], axis=3), axis=3
+            )
 
             # 2. Compute the state for each intra-chunk
             # (right term of low-rank factorization of off-diagonal blocks; B terms)
             decay_states = ops.exp(A_cumsum[:, :, :, -1:] - A_cumsum)
             B_decay = B * ops.permute(decay_states, dims=[0, -2, -1, 1])[..., None]
-            states = ops.sum(B_decay[..., None, :] * hidden_states[..., None], axis=2)
+            states = ops.squeeze(
+                ops.sum(B_decay[..., None, :] * hidden_states[..., None], axis=2),
+                axis=2,
+            )
 
             # 3. Compute the inter-chunk SSM recurrence; produces correct SSM states at chunk boundaries
             # (middle term of factorization of off-diag blocks; A terms)
@@ -486,7 +500,7 @@ class Mamba2Mixer(nn.Module):
             else:
                 previous_states = ops.constant(
                     np.zeros(
-                        tuple(states[:, :1].shape),
+                        tuple(int(s) for s in states[:, :1].shape),
                         dtype=np.float32,  # TODO: remove fixed dtype
                     ),
                     dtype=states.dtype,
@@ -497,8 +511,11 @@ class Mamba2Mixer(nn.Module):
                 segment_sum(pad_tensor(A_cumsum[:, :, :, -1], (1, 0)))
             )
             decay_chunk = decay_chunk.transpose(1, 3)
-            new_states = ops.sum(
-                (decay_chunk[..., None, None] * states[:, :, None, ...]), axis=1
+            new_states = ops.squeeze(
+                ops.sum(
+                    (decay_chunk[..., None, None] * states[:, :, None, ...]), axis=1
+                ),
+                axis=1,
             )
             states, ssm_state = new_states[:, :-1], new_states[:, -1]
 
@@ -508,7 +525,8 @@ class Mamba2Mixer(nn.Module):
             C_times_states = C[..., None, :] * states[:, :, None, ...]
             state_decay_out_permuted = ops.permute(state_decay_out, dims=[0, 2, 3, 1])
             Y_off = (
-                ops.sum(C_times_states, axis=-1) * state_decay_out_permuted[..., None]
+                ops.squeeze(ops.sum(C_times_states, axis=-1), axis=-1)
+                * state_decay_out_permuted[..., None]
             )
 
             # Add output of intra-chunk and inter-chunk terms (diagonal and off-diagonal blocks)
