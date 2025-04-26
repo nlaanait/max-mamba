@@ -153,9 +153,40 @@ def mamba2_mixer_initializer(config: Mamba2Config):
 
     inv_dt = dt + np.log(-np.expm1(-dt))
     return {
-        "A": np.arange(1, config.num_heads),
-        "dt_bias": inv_dt,
-        "D": np.ones(config.num_heads),
+        "A": np.arange(1, config.num_heads + 1, dtype=np.float32),
+        "dt_bias": inv_dt.astype(np.float32),
+        "D": np.ones(config.num_heads, dtype=np.float32),
+    }
+
+
+def mamba2_mixer_random_initializer(config: Mamba2Config):
+    out_channels = (
+        int(config.expand * config.hidden_size)
+        + 2 * config.n_groups * config.state_size
+    )
+    in_channels = out_channels // config.n_groups
+    conv_kernel_shape = (config.conv_kernel, in_channels, out_channels)
+    in_proj_weight_dims = (
+        int(
+            2 * config.expand * config.hidden_size
+            + 2 * config.n_groups * config.state_size
+            + config.num_heads
+        ),
+        config.hidden_size,
+    )
+    out_proj_weight_dims = (config.hidden_size, int(config.expand * config.hidden_size))
+    return {
+        "conv1d.weight": np.random.rand(*conv_kernel_shape).astype(np.float32),
+        "conv1d.bias": (
+            np.zeros(out_channels)
+            if config.use_conv_bias
+            else np.random.rand(out_channels).astype(np.float32)
+        ),
+        "in_proj.weight": np.random.rand(*in_proj_weight_dims).astype(np.float32),
+        "in_proj.bias": np.zeros(in_proj_weight_dims[-1]).astype(np.float32),
+        "out_proj.weight": np.random.rand(*out_proj_weight_dims).astype(np.float32),
+        "out_proj.bias": np.zeros(out_proj_weight_dims[-1]).astype(np.float32),
+        "norm.weight": np.random.rand(out_proj_weight_dims[-1]).astype(np.float32),
     }
 
 
@@ -212,6 +243,7 @@ class Mamba2Mixer(nn.Module):
             projection_size,
             dtype=config.dtype,
             has_bias=config.use_bias,
+            name="in_proj",
         )
         # selective projection used to make dt, B and C input dependant
 
@@ -223,7 +255,7 @@ class Mamba2Mixer(nn.Module):
         # The core is to load them, compute the discrete states, then write the updated state. Keeps the memory bounded
         self.A = Weight("A", config.dtype, (self.num_heads,), self.device)
         self.norm = RMSNormGated(
-            (self.intermediate_size,), eps=config.layer_norm_epsilon, name="rmsnorm"
+            (self.intermediate_size,), eps=config.layer_norm_epsilon, name="norm"
         )
         self.D = Weight("D", config.dtype, (self.num_heads,), self.device)
 
@@ -461,7 +493,6 @@ class Mamba2Mixer(nn.Module):
             # 1. Compute the output for each intra-chunk (diagonal blocks)
             # This is the analog of a causal mask
             L = ops.exp(segment_sum(A))
-
             # Contraction of C and B to get G (attention-weights like)
             G_intermediate = (
                 C[:, :, :, None, :, :] * B[:, :, None, :, :, :]
@@ -487,7 +518,6 @@ class Mamba2Mixer(nn.Module):
                 ops.sum(B_decay[..., None, :] * hidden_states[..., None], axis=2),
                 axis=2,
             )
-
             # 3. Compute the inter-chunk SSM recurrence; produces correct SSM states at chunk boundaries
             # (middle term of factorization of off-diag blocks; A terms)
             if (
@@ -529,7 +559,6 @@ class Mamba2Mixer(nn.Module):
                 ops.squeeze(ops.sum(C_times_states, axis=-1), axis=-1)
                 * state_decay_out_permuted[..., None]
             )
-
             # Add output of intra-chunk and inter-chunk terms (diagonal and off-diagonal blocks)
             y = Y_diag + Y_off
             # [bsz, -1, self.chunk_size, num_heads, head_dim] -> [bsz, (padded) seq_len, num_heads, head_dim]

@@ -20,7 +20,7 @@ class RMSNormGated(Module):
         self.device = device if device else DeviceRef.CPU()
         self.dtype = dtype if dtype else DType.float32
         self.weight = Weight(
-            f"{name}.Weight" if name else "Weight",
+            f"{name}.weight" if name else "weight",
             self.dtype,
             self.hidden_size,
             device=self.device,
