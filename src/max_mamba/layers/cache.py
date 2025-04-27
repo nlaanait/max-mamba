@@ -6,6 +6,27 @@ from max_mamba import Mamba2Config
 from max_mamba.ops import roll_tensor
 
 
+def mamba2_cache_initializer(batch_size: int, config: Mamba2Config):
+    conv_state_size = (
+        batch_size,
+        int(config.expand * config.hidden_size)
+        + 2 * config.n_groups * config.state_size,
+        config.conv_kernel,
+    )
+    conv_cache_size = (config.num_hidden_layers,) + conv_state_size
+    ssm_cache_size = (
+        config.num_hidden_layers,
+        batch_size,
+        config.num_heads,
+        config.head_dim,
+        config.state_size,
+    )
+    conv_states = np.zeros(conv_cache_size, dtype=np.float32)
+    ssm_states = np.zeros(ssm_cache_size, dtype=np.float32)
+
+    return {"conv_states": conv_states, "ssm_states": ssm_states}
+
+
 class Mamba2Cache:
     """
     Arguments:

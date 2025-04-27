@@ -272,7 +272,7 @@ class Mamba2Mixer(nn.Module):
         self,
         hidden_states: TensorValue,
         cache_params: Optional[Mamba2Cache] = None,
-        cache_position: Optional[int] = None,
+        cache_position: Optional[list[int]] = None,
         attention_mask: Optional[TensorValue] = None,
     ):
         if CUSTOM_MOJO_OPS:
@@ -295,7 +295,7 @@ class Mamba2Mixer(nn.Module):
         self,
         input_states: TensorValue,
         cache_params: Optional[Mamba2Cache] = None,
-        cache_position: Optional[int] = None,
+        cache_position: Optional[list[int]] = None,
         attention_mask: Optional[TensorValue] = None,
     ):
         self.A_log = ops.log(self.A)
@@ -322,7 +322,7 @@ class Mamba2Mixer(nn.Module):
         if (
             cache_params is not None
             and cache_position is not None
-            and cache_position > 0
+            and cache_position[0] > 0
         ):
             cache_params.update_conv_state(
                 layer_idx=self.layer_idx,
@@ -372,9 +372,8 @@ class Mamba2Mixer(nn.Module):
         if (
             cache_params is not None
             and cache_position is not None
-            and cache_position > 0
+            and cache_position[0] > 0
         ):
-            cache_device = cache_params.ssm_states.device
 
             # Note: there is no need to pad parameter matrices here, as there is just one new token
             # for batched generation
@@ -523,7 +522,7 @@ class Mamba2Mixer(nn.Module):
             if (
                 cache_params is not None
                 and cache_position is not None
-                and cache_position > 0
+                and cache_position[0] > 0
             ):
                 previous_states = cache_params.ssm_states[self.layer_idx][
                     :, None, ...
