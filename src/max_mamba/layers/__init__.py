@@ -1,6 +1,5 @@
 from .rmsnorm import RMSNormGated
 from .cache import Mamba2Cache, mamba2_cache_initializer
-from .conv import Conv1d
 from .mixer import (
     Mamba2Mixer,
     mamba2_mixer_initializer,

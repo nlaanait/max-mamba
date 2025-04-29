@@ -8,7 +8,7 @@ from max.dtype import DType
 from max.graph import DeviceRef, TensorValue, Weight, ops
 
 from max_mamba import Mamba2Config
-from max_mamba.layers import Conv1d, Mamba2Cache, RMSNormGated
+from max_mamba.layers import Mamba2Cache, RMSNormGated
 from max_mamba.ops import clamp_tensor, pad_tensor, softplus, tile_tensor
 
 mojo_ops_path = Path(__file__).parent / "kernels"
@@ -225,12 +225,12 @@ class Mamba2Mixer(nn.Module):
         self.time_step_max = config.time_step_max
 
         self.conv_dim = self.intermediate_size + 2 * self.n_groups * self.ssm_state_size
-        self.conv1d = Conv1d(
+        self.conv1d = nn.Conv1D(
             in_channels=self.conv_dim,
             out_channels=self.conv_dim,
             has_bias=self.use_conv_bias,
             kernel_size=self.conv_kernel_size,
-            groups=self.n_groups,
+            num_groups=self.n_groups,
             padding=config.conv_kernel - 1,
             dtype=config.dtype,
             name="conv1d",
@@ -238,12 +238,13 @@ class Mamba2Mixer(nn.Module):
 
         # projection of the input hidden states
         projection_size = self.intermediate_size + self.conv_dim + self.num_heads
-        self.in_proj = nn.LinearV2(
+        self.in_proj = nn.Linear(
             self.hidden_size,
             projection_size,
             dtype=config.dtype,
             has_bias=config.use_bias,
             name="in_proj",
+            device=self.device,
         )
         # selective projection used to make dt, B and C input dependant
 
@@ -259,12 +260,13 @@ class Mamba2Mixer(nn.Module):
         )
         self.D = Weight("D", config.dtype, (self.num_heads,), self.device)
 
-        self.out_proj = nn.LinearV2(
+        self.out_proj = nn.Linear(
             self.intermediate_size,
             self.hidden_size,
             dtype=config.dtype,
             has_bias=config.use_bias,
             name="out_proj",
+            device=self.device,
         )
         self.use_bias = config.use_bias
 
