@@ -5,13 +5,12 @@ from typing import Callable, Literal, Optional
 from max.dtype import DType
 from max.graph import DeviceRef, TensorValue
 from max.graph.quantization import QuantizationConfig, QuantizationEncoding
-from max.pipelines.config import MAXModelConfig, PipelineConfig
-from max.pipelines.max_config import MAXConfig
+from max.pipelines.lib import MAXModelConfig, PipelineConfig
 from transformers import Mamba2Config as HF_MAMBA2CFG
 
 
 @dataclass
-class MambaConfigBase(MAXConfig):
+class MambaConfigBase(MAXModelConfig):
     """Base configuration for Mamba models."""
 
     num_heads: int = 128
