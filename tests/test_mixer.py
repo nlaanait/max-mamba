@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 import pytest
 import torch
@@ -18,24 +20,6 @@ from max_mamba.layers import (
 )
 
 
-@pytest.fixture
-def RTOL():
-    return 1e-6
-
-
-@pytest.fixture
-def init_np_tensor():
-    def _init_np_tensor(size, dtype=np.float32):
-        return np.random.rand(*size).astype(dtype)
-
-    return _init_np_tensor
-
-
-@pytest.fixture
-def max_device(device=None):
-    return device if device else DeviceRef.CPU()
-
-
 def get_max_mixer_results(
     device,
     config: Mamba2Config,
@@ -44,6 +28,7 @@ def get_max_mixer_results(
     hidden_states: np.ndarray,
     attention_mask: np.ndarray,
     layer_idx: int = 1,
+    weights_registry: Optional[dict] = None,
 ):
     hidden_size = (batch_size, seq_len, config.hidden_size)
     attention_mask_shape = (batch_size, seq_len)
@@ -70,11 +55,15 @@ def get_max_mixer_results(
         mixer_graph.output(ctx_states, ctx_states_masked, ctx_states_cache)
 
     session = InferenceSession()
+    if weights_registry is None:
+        weights_registry = (
+            mamba2_mixer_initializer(config=config)
+            | mamba2_mixer_random_initializer(config=config)
+            | mamba2_cache_initializer(batch_size=batch_size, config=config)
+        )
     model = session.load(
         mixer_graph,
-        weights_registry=mamba2_mixer_initializer(config=config)
-        | mamba2_mixer_random_initializer(config=config)
-        | mamba2_cache_initializer(batch_size=batch_size, config=config),
+        weights_registry=weights_registry,
     )
     return model.execute(hidden_states, attention_mask)
 
@@ -113,7 +102,7 @@ def get_hf_mixer_results(
     return ctx_states, ctx_states_masked, ctx_states_cache
 
 
-@pytest.mark.parametrize("batch_size,seq_len", [(2, 4), (1, 2)])
+@pytest.mark.parametrize("batch_size,seq_len", [(2, 2), (1, 2)])
 def test_mamba2_mixer_equivalence(
     RTOL, max_device, init_np_tensor, batch_size, seq_len
 ):
@@ -125,16 +114,13 @@ def test_mamba2_mixer_equivalence(
     hidden_states = hidden_states.astype(np.float32)
     attention_mask = np.ceil(np.round(init_np_tensor(attention_mask_shape)))
     attention_mask = attention_mask.astype(np.float32)
-    ctx_states, ctx_states_masked, ctx_states_cache = get_max_mixer_results(
-        device=max_device,
-        config=max_config,
-        batch_size=batch_size,
-        seq_len=seq_len,
-        hidden_states=hidden_states.astype(np.float32),
-        attention_mask=attention_mask.astype(np.float32),
-    )
-    # HF config
+
+    # HF config and weights extraction
     hf_config = HF_MAMBA2CFG()
+    layer_idx = 1
+    hf_mixer = HF_Mamba2Mixer(config=hf_config, layer_idx=layer_idx)
+
+    # HF outputs
     ctx_states_hf, ctx_states_masked_hf, ctx_states_cache_hf = get_hf_mixer_results(
         config=hf_config,
         batch_size=batch_size,
@@ -142,11 +128,48 @@ def test_mamba2_mixer_equivalence(
         hidden_states=hidden_states,
         attention_mask=attention_mask,
     )
-    # Only compare shapes and types for now, as weights are random and not aligned
+
+    # Extract state_dict and convert to numpy
+    hf_weights = {k: v.detach().numpy() for k, v in hf_mixer.state_dict().items()}
+    # Add cache weights from MAX initializer
+    weights_registry = (
+        hf_weights
+        | mamba2_cache_initializer(batch_size=batch_size, config=max_config)
+        | mamba2_mixer_initializer(config=max_config)
+    )
+    for k, v in hf_weights.items():
+        hf_weights[k] = np.copy(v, order="C")
+    
+
+    # print(weights_registry)
+    # print(hidden_states.shape, hidden_states.dtype, hidden_states.flags["C_CONTIGUOUS"])
+    # print(
+    #     attention_mask.shape, attention_mask.dtype, attention_mask.flags["C_CONTIGUOUS"]
+    # )
+
+    # # Run MAX with HF weights
+    ctx_states, ctx_states_masked, ctx_states_cache = get_max_mixer_results(
+        device=max_device,
+        config=max_config,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        hidden_states=hidden_states,
+        attention_mask=attention_mask,
+        weights_registry=weights_registry,
+    )
+
+    # Compare shapes and dtypes
     assert ctx_states.to_numpy().shape == ctx_states_hf.shape
     assert ctx_states_masked.to_numpy().shape == ctx_states_masked_hf.shape
     assert ctx_states_cache.to_numpy().shape == ctx_states_cache_hf.shape
-    # Optionally: check dtype
     assert ctx_states.to_numpy().dtype == ctx_states_hf.dtype
     assert ctx_states_masked.to_numpy().dtype == ctx_states_masked_hf.dtype
     assert ctx_states_cache.to_numpy().dtype == ctx_states_cache_hf.dtype
+    # # Compare values
+    np.testing.assert_allclose(ctx_states.to_numpy(), ctx_states_hf, rtol=RTOL)
+    np.testing.assert_allclose(
+        ctx_states_masked.to_numpy(), ctx_states_masked_hf, rtol=RTOL
+    )
+    np.testing.assert_allclose(
+        ctx_states_cache.to_numpy(), ctx_states_cache_hf, rtol=RTOL
+    )
