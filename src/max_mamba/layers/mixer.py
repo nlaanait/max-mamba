@@ -164,8 +164,7 @@ def mamba2_mixer_random_initializer(config: Mamba2Config):
         int(config.expand * config.hidden_size)
         + 2 * config.n_groups * config.state_size
     )
-    in_channels = out_channels // config.n_groups
-    conv_kernel_shape = (config.conv_kernel, in_channels, out_channels)
+    conv_kernel_shape = (config.conv_kernel, 1, out_channels)
     in_proj_weight_dims = (
         int(
             2 * config.expand * config.hidden_size
@@ -183,9 +182,9 @@ def mamba2_mixer_random_initializer(config: Mamba2Config):
             else np.random.rand(out_channels).astype(np.float32)
         ),
         "in_proj.weight": np.random.rand(*in_proj_weight_dims).astype(np.float32),
-        "in_proj.bias": np.zeros(in_proj_weight_dims[-1]).astype(np.float32),
+        # "in_proj.bias": np.zeros(in_proj_weight_dims[-1]).astype(np.float32),
         "out_proj.weight": np.random.rand(*out_proj_weight_dims).astype(np.float32),
-        "out_proj.bias": np.zeros(out_proj_weight_dims[-1]).astype(np.float32),
+        # "out_proj.bias": np.zeros(out_proj_weight_dims[-1]).astype(np.float32),
         "norm.weight": np.random.rand(out_proj_weight_dims[-1]).astype(np.float32),
     }
 
