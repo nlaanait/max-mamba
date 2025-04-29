@@ -3,7 +3,7 @@ import pytest
 import torch
 from max.dtype import DType
 from max.engine.api import InferenceSession
-from max.graph import Graph, TensorType
+from max.graph import DeviceRef, Graph, TensorType
 from transformers import Mamba2Config as HF_MAMBA2CFG
 from transformers.models.mamba2.modeling_mamba2 import Mamba2Cache as HF_Mamba2Cache
 
@@ -63,6 +63,7 @@ def get_max_cache_results(
     new_conv_state: np.ndarray,
     new_ssm_state: np.ndarray,
     layer_idx: int,
+    device: DeviceRef,
 ):
     input_size = new_conv_state.shape
     conv_cache_size = (config.num_hidden_layers,) + input_size
@@ -78,8 +79,8 @@ def get_max_cache_results(
     with Graph(
         "mamba2_cache",
         input_types=(
-            TensorType(DType.float32, new_conv_state.shape),
-            TensorType(DType.float32, new_ssm_state.shape),
+            TensorType(DType.float32, new_conv_state.shape, device=device),
+            TensorType(DType.float32, new_ssm_state.shape, device=device),
         ),
     ) as cache_graph:
         conv_state, ssm_state = cache_graph.inputs
@@ -112,7 +113,7 @@ def get_max_cache_results(
     )
 
 
-def test_cache(RTOL, init_np_tensor, mamba2_configs):
+def test_cache(RTOL, max_device, init_np_tensor, mamba2_configs):
     max_config, hf_config = mamba2_configs
     batch_size = 1
     # Initialize test data
@@ -150,6 +151,7 @@ def test_cache(RTOL, init_np_tensor, mamba2_configs):
         new_conv_state=conv_state,
         new_ssm_state=ssm_state,
         layer_idx=layer_idx,
+        device=max_device,
     )
 
     # Compare results

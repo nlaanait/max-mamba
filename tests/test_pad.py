@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 from max.dtype import DType
 from max.engine.api import InferenceSession
-from max.graph import Graph, TensorType
+from max.graph import DeviceRef, Graph, TensorType
 
 from max_mamba.ops import pad_tensor
 
@@ -12,13 +12,14 @@ from max_mamba.ops import pad_tensor
 def get_max_pad_result(
     input_tensor: np.ndarray,
     padding: tuple,
+    device: DeviceRef,
     value: float = 0.0,
 ) -> np.ndarray:
     input_size = tuple(input_tensor.shape)
     max_pad = Graph(
         "pad",
         lambda x: pad_tensor(x, padding, value=value),
-        input_types=[TensorType(DType.float32, input_size)],
+        input_types=[TensorType(DType.float32, input_size, device=device)],
     )
 
     session = InferenceSession()
@@ -27,7 +28,7 @@ def get_max_pad_result(
     return result.to_numpy()
 
 
-def test_pad_3d(RTOL, init_np_tensor):
+def test_pad_3d(RTOL, max_device, init_np_tensor):
     # Test parameters
     batch_size = 2
     seq_length = 3
@@ -48,12 +49,13 @@ def test_pad_3d(RTOL, init_np_tensor):
         input_tensor=input_tensor,
         padding=padding,
         value=value,
+        device=max_device,
     )
 
     np.testing.assert_allclose(pt_output, max_output, rtol=RTOL)
 
 
-def test_pad_no_padding(RTOL, init_np_tensor):
+def test_pad_no_padding(RTOL, max_device, init_np_tensor):
     # Test parameters
     batch_size = 2
     seq_length = 3
@@ -74,6 +76,7 @@ def test_pad_no_padding(RTOL, init_np_tensor):
         input_tensor=input_tensor,
         padding=padding,
         value=value,
+        device=max_device,
     )
 
     np.testing.assert_allclose(pt_output, max_output, rtol=RTOL)

@@ -1,24 +1,25 @@
 from typing import Optional
+
 import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F
-from max.engine.api import InferenceSession
-from max.graph import Graph, TensorType
-from max.dtype import DType
-from max_mamba.ops import tile_tensor
 from conftest import RTOL, init_np_tensor
+from max.dtype import DType
+from max.engine.api import InferenceSession
+from max.graph import DeviceRef, Graph, TensorType
+
+from max_mamba.ops import tile_tensor
 
 
 def get_max_tile_result(
-    input_tensor: np.ndarray,
-    dims: tuple,
+    input_tensor: np.ndarray, dims: tuple, device: DeviceRef
 ) -> np.ndarray:
     input_size = tuple(input_tensor.shape)
     max_pad = Graph(
         "tile",
         lambda x: tile_tensor(x, dims=dims),
-        input_types=[TensorType(DType.float32, input_size)],
+        input_types=[TensorType(DType.float32, input_size, device=device)],
     )
 
     session = InferenceSession()
@@ -37,7 +38,7 @@ def get_max_tile_result(
         (2, 1, 2, 4),
     ],
 )
-def test_tile(RTOL, init_np_tensor, dims):
+def test_tile(RTOL, max_device, init_np_tensor, dims):
     # Test parameters
     batch_size = 2
     seq_length = 3
@@ -56,7 +57,6 @@ def test_tile(RTOL, init_np_tensor, dims):
 
     # MAX implementation
     max_output = get_max_tile_result(
-        input_tensor=input_tensor,
-        dims=dims,
+        input_tensor=input_tensor, dims=dims, device=max_device
     )
     np.testing.assert_allclose(pt_output, max_output, rtol=RTOL)

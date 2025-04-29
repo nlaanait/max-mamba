@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import torch
+from max.graph import DeviceRef
 from transformers import Mamba2Config as HF_MAMBA2CFG
 
 from max_mamba.config import Mamba2Config
@@ -38,3 +39,8 @@ def mamba2_configs():
 @pytest.fixture
 def RTOL():
     return 1e-6
+
+
+@pytest.fixture
+def max_device(device=None):
+    return device if device else DeviceRef.CPU()

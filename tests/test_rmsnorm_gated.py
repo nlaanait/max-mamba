@@ -1,13 +1,13 @@
 import numpy as np
 from max.dtype import DType
 from max.engine.api import InferenceSession
-from max.graph import Graph, TensorType
+from max.graph import DeviceRef, Graph, TensorType
 from transformers.models.mamba2.modeling_mamba2 import MambaRMSNormGated
 
 from max_mamba.layers import RMSNormGated
 
 
-def test_rmsnorm_gated(RTOL, init_pt_tensor):
+def test_rmsnorm_gated(RTOL, max_device, init_pt_tensor):
     hidden_size = (8, 16)
     hidden_state = init_pt_tensor(size=hidden_size)
 
@@ -16,17 +16,17 @@ def test_rmsnorm_gated(RTOL, init_pt_tensor):
     pt_output = pt_rms_gated.forward(hidden_state).detach().numpy()
 
     # MAX implementation
-    max_output = get_max_rms_gated(hidden_state=hidden_state.numpy())
+    max_output = get_max_rms_gated(hidden_state=hidden_state.numpy(), device=max_device)
 
     np.testing.assert_allclose(pt_output, max_output, rtol=RTOL)
 
 
-def get_max_rms_gated(hidden_state: np.ndarray) -> np.ndarray:
+def get_max_rms_gated(hidden_state: np.ndarray, device: DeviceRef) -> np.ndarray:
     hidden_size = tuple(hidden_state.shape)
     max_rms_gated = Graph(
         "rmsnorm_gated",
         RMSNormGated(hidden_size=hidden_size),
-        input_types=[TensorType(DType.float32, hidden_size)],
+        input_types=[TensorType(DType.float32, hidden_size, device=device)],
     )
 
     session = InferenceSession()

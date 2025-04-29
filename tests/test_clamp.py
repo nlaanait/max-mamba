@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from conftest import RTOL, init_np_tensor
 from max.dtype import DType
 from max.engine.api import InferenceSession
-from max.graph import Graph, TensorType
+from max.graph import DeviceRef, Graph, TensorType
 
 from max_mamba.ops import clamp_tensor
 
@@ -16,12 +16,13 @@ def get_max_clamp_result(
     input_tensor: np.ndarray,
     min_value: Optional[float],
     max_value: Optional[float],
+    device: DeviceRef,
 ) -> np.ndarray:
     input_size = tuple(input_tensor.shape)
     max_pad = Graph(
         "clamp",
         lambda x: clamp_tensor(x, min_val=min_value, max_val=max_value),
-        input_types=[TensorType(DType.float32, input_size)],
+        input_types=[TensorType(DType.float32, input_size, device=device)],
     )
 
     session = InferenceSession()
@@ -38,7 +39,7 @@ def get_max_clamp_result(
         (0.5, 0.5),
     ],
 )
-def test_clamp(RTOL, init_np_tensor, min_value, max_value):
+def test_clamp(RTOL, max_device, init_np_tensor, min_value, max_value):
     # Test parameters
     batch_size = 2
     seq_length = 3
@@ -61,6 +62,7 @@ def test_clamp(RTOL, init_np_tensor, min_value, max_value):
         input_tensor=input_tensor,
         max_value=max_value,
         min_value=min_value,
+        device=max_device,
     )
 
     np.testing.assert_allclose(pt_output, max_output, rtol=RTOL)
