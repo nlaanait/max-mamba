@@ -27,6 +27,8 @@ grpcio = ">=1.71.0,<2"
 
 [tool.pixi.feature.test.dependencies]
 pytest = "*"
+pytest-xdist = ">=3.6.1,<4"
+pytest-forked = ">=1.6.0,<2"
 
 [tool.pixi.feature.dev.dependencies]
 ipykernel = "*"

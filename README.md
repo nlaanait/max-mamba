@@ -34,12 +34,17 @@ src/max_mamba/
 
 ## Running Tests
 
-The project uses `pytest` for testing. To run all tests:
+The project uses `pytest` for testing.  
+Testing amounts to running equivalence tests between torch layers/ops and max layers/ops.  
+To run all tests:
 
 ```bash
 # Run all tests
 magic shell -e 'test'
-pytest tests/
+pytest --forked tests # to avoid global state sharing between max modules which will fail tests 
+
+# some equivalence tests are lengthy so consider running in parallel
+pytest -n auto tests
 
 # Run a specific test file
 pytest tests/test_rmsnorm_gated.py
