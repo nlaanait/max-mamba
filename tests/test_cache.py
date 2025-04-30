@@ -10,24 +10,6 @@ from transformers.models.mamba2.modeling_mamba2 import Mamba2Cache as HF_Mamba2C
 from max_mamba.config import Mamba2Config
 from max_mamba.layers import Mamba2Cache
 
-torch.manual_seed(1234)
-
-
-def init_pt_tensor(
-    size: tuple[int, ...] = (8, 16), dtype: torch.dtype = torch.float32
-) -> torch.Tensor:
-    return torch.rand(size=size, dtype=dtype)
-
-
-def init_np_tensor(size: tuple[int, ...], dtype: np.dtype) -> np.ndarray:
-    return np.random.rand(*size).astype(dtype)
-
-
-def init_mamba2configs() -> tuple[Mamba2Config, HF_MAMBA2CFG]:
-    max_config = Mamba2Config()
-    hf_config = HF_MAMBA2CFG()
-    return (max_config, hf_config)
-
 
 def get_hf_cache_results(
     batch_size: int,

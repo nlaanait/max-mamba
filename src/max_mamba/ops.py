@@ -9,7 +9,7 @@ def softplus(x: TensorValue) -> TensorValue:
 
 
 def pad_tensor(
-    x: TensorValue, pad: tuple, value=0, mode: str = "constant"
+    x: TensorValue, pad: tuple, value: float = 0.0, mode: str = "constant"
 ) -> TensorValue:
     if mode != "constant":
         raise NotImplementedError("mode != 'constant' not implemented.")

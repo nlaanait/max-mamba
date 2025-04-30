@@ -1,14 +1,14 @@
 from typing import Optional
 
+from max import nn
 from max.dtype import DType
 from max.graph import DeviceRef, TensorValue, Weight, ops
-from max.nn import Module
 
 
-class RMSNormGated(Module):
+class MambaRMSNormGated(nn.Module):
     def __init__(
         self,
-        hidden_size: tuple[int, ...],
+        hidden_size: int,
         eps: float = 1e-6,
         dtype: DType | None = None,
         device: DeviceRef | None = None,
@@ -22,7 +22,7 @@ class RMSNormGated(Module):
         self.weight = Weight(
             f"{name}.weight" if name else "weight",
             self.dtype,
-            self.hidden_size,
+            (self.hidden_size,),
             device=self.device,
         )
 
@@ -40,3 +40,21 @@ class RMSNormGated(Module):
         variance = ops.mean(ops.pow(h, 2), axis=-1)
         h = ops.mul(h, ops.rsqrt(ops.add(variance, self.eps)))
         return h
+
+
+# subclassing to maintain naming and interface compat. with transformers
+class Mamba2RMSNorm(MambaRMSNormGated):
+    # def __init__(self, hidden_size: int, eps: float = 1e-6):
+    #     super().__init__(hidden_size=hidden_size, eps=eps, )
+    def __init__(
+        self,
+        hidden_size: int,
+        eps: float = 0.000001,
+        dtype: DType | None = None,
+        device: DeviceRef | None = None,
+        name: str | None = None,
+    ):
+        super().__init__(hidden_size, eps, dtype, device, name)
+
+    def __call__(self, x: TensorValue) -> TensorValue:
+        return super().__call__(x, gate=None)

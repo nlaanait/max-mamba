@@ -8,7 +8,8 @@ from max.dtype import DType
 from max.graph import DeviceRef, TensorValue, Weight, ops
 
 from max_mamba import Mamba2Config
-from max_mamba.layers import Mamba2Cache, RMSNormGated
+from max_mamba.layers.cache import Mamba2Cache
+from max_mamba.layers.rmsnorm import MambaRMSNormGated
 from max_mamba.ops import clamp_tensor, pad_tensor, softplus, tile_tensor
 
 mojo_ops_path = Path(__file__).parent / "kernels"
@@ -144,7 +145,7 @@ def apply_mask_to_padding_states(
     return hidden_states
 
 
-def mamba2_mixer_initializer(config: Mamba2Config):
+def mamba2_mixer_initializer(config: Mamba2Config, parent=None):
     dt = np.exp(
         np.random.rand(config.num_heads)
         * (math.log(config.time_step_max) - np.log(config.time_step_min))
@@ -153,9 +154,13 @@ def mamba2_mixer_initializer(config: Mamba2Config):
 
     inv_dt = dt + np.log(-np.expm1(-dt))
     return {
-        "A": np.arange(1, config.num_heads + 1, dtype=np.float32),
-        "dt_bias": inv_dt.astype(np.float32),
-        "D": np.ones(config.num_heads, dtype=np.float32),
+        "A" if parent is None else f"{parent}.A": np.arange(
+            1, config.num_heads + 1, dtype=np.float32
+        ),
+        "dt_bias" if parent is None else f"{parent}.dt_bias": inv_dt.astype(np.float32),
+        "D" if parent is None else f"{parent}.D": np.ones(
+            config.num_heads, dtype=np.float32
+        ),
     }
 
 
@@ -232,7 +237,7 @@ class Mamba2Mixer(nn.Module):
             num_groups=self.conv_dim,
             padding=config.conv_kernel - 1,
             dtype=config.dtype,
-            name="conv1d",
+            # name="conv1d",
         )
 
         # projection of the input hidden states
@@ -242,7 +247,7 @@ class Mamba2Mixer(nn.Module):
             projection_size,
             dtype=config.dtype,
             has_bias=config.use_bias,
-            name="in_proj",
+            # name="in_proj",
             device=self.device,
         )
         # selective projection used to make dt, B and C input dependant
@@ -254,8 +259,10 @@ class Mamba2Mixer(nn.Module):
         # S4D real initialization. These are not discretized!
         # The core is to load them, compute the discrete states, then write the updated state. Keeps the memory bounded
         self.A = Weight("A", config.dtype, (self.num_heads,), self.device)
-        self.norm = RMSNormGated(
-            (self.intermediate_size,), eps=config.layer_norm_epsilon, name="norm"
+        self.norm = MambaRMSNormGated(
+            self.intermediate_size,
+            eps=config.layer_norm_epsilon,
+            # name="norm"
         )
         self.D = Weight("D", config.dtype, (self.num_heads,), self.device)
 
@@ -264,7 +271,7 @@ class Mamba2Mixer(nn.Module):
             self.hidden_size,
             dtype=config.dtype,
             has_bias=config.use_bias,
-            name="out_proj",
+            # name="out_proj",
             device=self.device,
         )
         self.use_bias = config.use_bias

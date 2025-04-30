@@ -42,6 +42,7 @@ def get_max_mixer_results(
         cache = Mamba2Cache(config=config, batch_size=batch_size)
         hidden_states_in, attention_mask_in = mixer_graph.inputs
         mixer = Mamba2Mixer(config=config, layer_idx=layer_idx)
+        mixer.state_dict()
         ctx_states = mixer(hidden_states=hidden_states_in)  # type: ignore
         ctx_states_masked = mixer(
             hidden_states=hidden_states_in, attention_mask=attention_mask_in  # type: ignore
