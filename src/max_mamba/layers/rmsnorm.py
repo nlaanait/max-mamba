@@ -44,8 +44,6 @@ class MambaRMSNormGated(nn.Module):
 
 # subclassing to maintain naming and interface compat. with transformers
 class Mamba2RMSNorm(MambaRMSNormGated):
-    # def __init__(self, hidden_size: int, eps: float = 1e-6):
-    #     super().__init__(hidden_size=hidden_size, eps=eps, )
     def __init__(
         self,
         hidden_size: int,

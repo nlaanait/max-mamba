@@ -3,6 +3,7 @@ import random
 import numpy as np
 
 from max_mamba.config import Mamba2Config
+from max_mamba.model import Mamba2Model
 
 
 def seed_all(seed: int):

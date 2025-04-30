@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 from max.graph import DeviceRef
-from transformers import Mamba2Config as HF_MAMBA2CFG
+from transformers.models.mamba2 import Mamba2Config as HF_MAMBA2CFG
 
 from max_mamba.config import Mamba2Config
 
