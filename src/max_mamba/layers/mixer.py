@@ -177,14 +177,14 @@ def mamba2_mixer_random_initializer(config: Mamba2Config):
     return {
         "conv1d.weight": np.random.rand(*conv_kernel_shape).astype(np.float32),
         "conv1d.bias": (
-            np.zeros(out_channels)
+            np.zeros(out_channels).astype(np.float32)
             if config.use_conv_bias
             else np.random.rand(out_channels).astype(np.float32)
         ),
         "in_proj.weight": np.random.rand(*in_proj_weight_dims).astype(np.float32),
-        # "in_proj.bias": np.zeros(in_proj_weight_dims[-1]).astype(np.float32),
+        "in_proj.bias": np.zeros(in_proj_weight_dims[-1]).astype(np.float32),
         "out_proj.weight": np.random.rand(*out_proj_weight_dims).astype(np.float32),
-        # "out_proj.bias": np.zeros(out_proj_weight_dims[-1]).astype(np.float32),
+        "out_proj.bias": np.zeros(out_proj_weight_dims[-1]).astype(np.float32),
         "norm.weight": np.random.rand(out_proj_weight_dims[-1]).astype(np.float32),
     }
 
@@ -229,7 +229,7 @@ class Mamba2Mixer(nn.Module):
             out_channels=self.conv_dim,
             has_bias=self.use_conv_bias,
             kernel_size=self.conv_kernel_size,
-            num_groups=self.n_groups,
+            num_groups=self.conv_dim,
             padding=config.conv_kernel - 1,
             dtype=config.dtype,
             name="conv1d",
@@ -306,6 +306,7 @@ class Mamba2Mixer(nn.Module):
 
         # 1. Gated MLP's linear projection
         input_states = apply_mask_to_padding_states(input_states, attention_mask)
+
         projected_states = self.in_proj(input_states)
         d_mlp = (
             projected_states.shape[-1]
