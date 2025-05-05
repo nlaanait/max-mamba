@@ -2,7 +2,7 @@ from typing import Optional
 
 from max import nn
 from max.dtype import DType
-from max.graph import TensorValue, ops
+from max.graph import DeviceRef, TensorValue, ops
 
 from max_mamba.config import Mamba2Config
 from max_mamba.layers.cache import Mamba2Cache
@@ -11,7 +11,13 @@ from max_mamba.layers.rmsnorm import Mamba2RMSNorm
 
 
 class Mamba2Block(nn.Module):
-    def __init__(self, config: Mamba2Config, layer_idx: int):
+    def __init__(
+        self,
+        config: Mamba2Config,
+        layer_idx: int,
+        device: DeviceRef = DeviceRef.CPU(),
+        dtype: DType = DType.float32,
+    ):
         super().__init__()
         self.config = config
         self.layer_idx = layer_idx
@@ -20,7 +26,9 @@ class Mamba2Block(nn.Module):
             config.hidden_size,
             eps=config.layer_norm_epsilon,
         )
-        self.mixer = Mamba2Mixer(config=config, layer_idx=layer_idx)
+        self.mixer = Mamba2Mixer(
+            config=config, layer_idx=layer_idx, device=device, dtype=dtype
+        )
 
     def __call__(
         self,

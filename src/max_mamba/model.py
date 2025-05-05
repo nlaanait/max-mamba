@@ -3,10 +3,13 @@ from typing import Optional
 
 import torch
 from max import nn
-from max.graph import DeviceRef, TensorValue
+from max.dtype import DType
+from max.engine.api import InferenceSession, Model
+from max.graph import DeviceRef, Graph, TensorType, TensorValue
 from max.nn.layer import LayerList
 from transformers.generation.utils import GenerationMixin
 from transformers.modeling_utils import PreTrainedModel
+from transformers.models.mamba2 import Mamba2Config as HF_Mamba2Config
 from transformers.utils.generic import ModelOutput
 
 from max_mamba.config import Mamba2Config
@@ -73,7 +76,7 @@ class Mamba2PreTrainedModel(PreTrainedModel):
     models. This class adapts the PyTorch-based PreTrainedModel to work with max.nn.
     """
 
-    config_class = Mamba2Config
+    config_class = HF_Mamba2Config
     base_model_prefix = "backbone"
     _no_split_modules = ["Mamba2Block"]
     supports_gradient_checkpointing = (
@@ -81,9 +84,14 @@ class Mamba2PreTrainedModel(PreTrainedModel):
     )
     _is_stateful = True
 
+    # @device.setter
+    # def device(self, val):
+    #     self._device = val
+
     def __init__(self, PretrainedConfig, *inputs, **kwargs):
         super().__init__(PretrainedConfig)
-        self.device = kwargs.get("device", DeviceRef.CPU())
+        # self.device = kwargs.get("device", DeviceRef.CPU())
+        # self.device
 
     def _init_weights(self, module):
         """Initialize the weights."""
@@ -148,22 +156,25 @@ class Mamba2PreTrainedModel(PreTrainedModel):
 
 
 class Mamba2Model(nn.Module):
-    def __init__(self, config: Mamba2Config, device: DeviceRef) -> None:
+    def __init__(self, config: Mamba2Config, device: DeviceRef, dtype: DType) -> None:
         super().__init__()
         self.embeddings = nn.Embedding(
             vocab_size=config.vocab_size,
             hidden_dim=config.hidden_size,
             device=device,
-            dtype=config.dtype,
+            dtype=dtype,
         )
         self.layers = LayerList(
             [
-                Mamba2Block(config=config, layer_idx=idx)
+                Mamba2Block(config=config, layer_idx=idx, device=device, dtype=dtype)
                 for idx in range(config.num_hidden_layers)
             ]
         )
         self.norm_f = MambaRMSNormGated(
-            hidden_size=config.hidden_size, eps=config.layer_norm_epsilon
+            hidden_size=config.hidden_size,
+            eps=config.layer_norm_epsilon,
+            device=device,
+            dtype=dtype,
         )
         self.config = config
         self.device = device if device else DeviceRef.CPU()
@@ -251,30 +262,88 @@ class Mamba2ForCausalLM(Mamba2PreTrainedModel, GenerationMixin):
     def __init__(
         self,
         config: Mamba2Config,
-        device: DeviceRef,
+        device: DeviceRef = DeviceRef.CPU(),
+        dtype: DType = DType.float32,
+        batch_size: int = 1,
+        max_seq_len: int = 32,
     ):
         super().__init__(config)
-        self.backbone = Mamba2Model(config=config, device=device)
-        self.lm_head = nn.Linear(
-            in_dim=config.hidden_size,
-            out_dim=config.vocab_size,
-            dtype=config.dtype,
-            device=device,
-            has_bias=False,
-        )
-        self.post_init()
+        self._device = device
+        self._dtype = dtype
+        self.config = config
+        self._dtype = dtype
+        self.session = InferenceSession()
+        self._state_dict = {}
+        self.batch_size = batch_size
+        self.max_seq_len = max_seq_len
+        self.model = None
+        # self.model = self.load_model()
 
-    def get_output_embeddings(self) -> nn.Module:
-        return self.lm_head
+    def _load_model(self) -> Model:
+        """Build graph and load model into inference session.
 
-    def set_output_embedings(self, new_embeddings: nn.Module):
-        self.lm_head = new_embeddings
+        Returns:
+            Model: The compiled model loaded in the inference session.
+        """
 
-    def get_input_embeddings(self) -> nn.Module:
-        return self.backbone.get_input_embeddings()
+        input_types = [
+            TensorType(
+                DType.int64,
+                shape=[self.batch_size, self.max_seq_len],
+                device=self._device,
+            ),
+            TensorType(
+                DType.float32,
+                shape=[self.batch_size, self.max_seq_len],
+                device=self._device,
+            ),
+        ]
 
-    def set_input_embeddings(self, new_embeddings: nn.Module):
-        return self.backbone.set_input_embeddings(new_embeddings)
+        with Graph("mamba2_causal_lm", input_types=input_types) as graph:
+            input_ids, attention_mask = graph.inputs
+
+            backbone = Mamba2Model(
+                config=self.config, device=self._device, dtype=self._dtype
+            )
+            backbone.state_dict()
+            lm_head = nn.Linear(
+                in_dim=self.config.hidden_size,
+                out_dim=self.config.vocab_size,
+                dtype=self._dtype,
+                device=self._device,
+                has_bias=False,
+            )
+            lm_head.state_dict()
+
+            hidden_states = backbone(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                return_dict=False,
+            )[0]
+            logits = lm_head(hidden_states)
+
+            graph.output(hidden_states, logits)
+
+            # Save references and state dict
+            self.backbone = backbone
+            self.lm_head = lm_head
+
+        return self.session.load(graph, weights_registry=self.state_dict())
+
+    def forward(
+        self,
+        input_ids: TensorValue | None = None,
+        attention_mask: TensorValue | None = None,
+        **kwargs,
+    ):
+        self.model = self.model if self.model else self._load_model()
+        """Forward pass using loaded model."""
+        hidden_states, logits = self.model.execute(input_ids, attention_mask)
+
+        if not self.config.use_return_dict:
+            return (logits.to_numpy(), +hidden_states.to_numpy()[1:])
+
+        return Mamba2CausalLMOutput(hidden_states=hidden_states, logits=logits)
 
     def prepare_inputs_for_generation(
         self,
@@ -319,41 +388,3 @@ class Mamba2ForCausalLM(Mamba2PreTrainedModel, GenerationMixin):
             }
         )
         return model_inputs
-
-    def forward(
-        self,
-        input_ids: TensorValue | None = None,
-        inputs_embeds: TensorValue | None = None,
-        cache_params: Mamba2Cache | None = None,
-        output_hidden_states: bool | None = None,
-        return_dict: bool | None = None,
-        use_cache: bool | None = None,
-        cache_position: list[int] | None = None,
-        attention_mask: TensorValue | None = None,
-    ):
-        return_dict = (
-            return_dict if return_dict is not None else self.config.use_return_dict
-        )
-        mamba2_outputs = self.backbone(
-            input_ids,
-            cache_params=cache_params,
-            inputs_embeds=inputs_embeds,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
-            use_cache=use_cache,
-            cache_position=cache_position,
-            attention_mask=attention_mask,
-        )
-        hidden_states = mamba2_outputs[0]
-
-        logits = self.lm_head(hidden_states)
-
-        if not return_dict:
-            output = (logits,) + mamba2_outputs[1:]
-            return output
-
-        return Mamba2ForCausalLMOutput(
-            logits=logits,
-            cache_params=mamba2_outputs.cache_params,
-            hidden_states=mamba2_outputs.hidden_states,
-        )

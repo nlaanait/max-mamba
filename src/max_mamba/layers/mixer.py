@@ -202,7 +202,13 @@ class Mamba2Mixer(nn.Module):
     and is why Mamba is called **selective** state spaces)
     """
 
-    def __init__(self, config: Mamba2Config, layer_idx: int):
+    def __init__(
+        self,
+        config: Mamba2Config,
+        layer_idx: int,
+        device: DeviceRef = DeviceRef.CPU(),
+        dtype: DType = DType.float32,
+    ):
         super().__init__()
         self.num_heads = config.num_heads
         self.hidden_size = config.hidden_size
@@ -214,8 +220,8 @@ class Mamba2Mixer(nn.Module):
         self.use_conv_bias = config.use_conv_bias
         self.activation = config.hidden_act
         self.act = ops.silu
-        self.dtype = config.dtype
-        self.device = config.devices[0] if config.devices else DeviceRef.CPU()
+        self.dtype = dtype
+        self.device = device
 
         self.layer_norm_epsilon = config.layer_norm_epsilon
         self.rms_norm = config.rms_norm
@@ -236,8 +242,8 @@ class Mamba2Mixer(nn.Module):
             kernel_size=self.conv_kernel_size,
             num_groups=self.conv_dim,
             padding=config.conv_kernel - 1,
-            dtype=config.dtype,
-            # name="conv1d",
+            dtype=self.dtype,
+            device=self.device,
         )
 
         # projection of the input hidden states
@@ -245,33 +251,32 @@ class Mamba2Mixer(nn.Module):
         self.in_proj = nn.Linear(
             self.hidden_size,
             projection_size,
-            dtype=config.dtype,
+            dtype=self.dtype,
             has_bias=config.use_bias,
-            # name="in_proj",
             device=self.device,
         )
         # selective projection used to make dt, B and C input dependant
 
         # time step projection (discretization)
         # instantiate once and copy inv_dt in init_weights of PretrainedModel
-        self.dt_bias = Weight("dt_bias", config.dtype, (self.num_heads,), self.device)
+        self.dt_bias = Weight("dt_bias", self.dtype, (self.num_heads,), self.device)
 
         # S4D real initialization. These are not discretized!
         # The core is to load them, compute the discrete states, then write the updated state. Keeps the memory bounded
-        self.A = Weight("A", config.dtype, (self.num_heads,), self.device)
+        self.A = Weight("A", self.dtype, (self.num_heads,), self.device)
         self.norm = MambaRMSNormGated(
             self.intermediate_size,
             eps=config.layer_norm_epsilon,
-            # name="norm"
+            device=self.device,
+            dtype=self.dtype,
         )
-        self.D = Weight("D", config.dtype, (self.num_heads,), self.device)
+        self.D = Weight("D", self.dtype, (self.num_heads,), self.device)
 
         self.out_proj = nn.Linear(
             self.intermediate_size,
             self.hidden_size,
-            dtype=config.dtype,
+            dtype=self.dtype,
             has_bias=config.use_bias,
-            # name="out_proj",
             device=self.device,
         )
         self.use_bias = config.use_bias

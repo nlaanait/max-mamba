@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import torch
+from max.dtype import DType
 from max.graph import DeviceRef
 from transformers.models.mamba2 import Mamba2Config as HF_MAMBA2CFG
 
@@ -44,3 +45,8 @@ def RTOL():
 @pytest.fixture
 def max_device(device=None):
     return device if device else DeviceRef.CPU()
+
+
+@pytest.fixture
+def max_dtype(dtype=None):
+    return dtype if dtype else DType.float32

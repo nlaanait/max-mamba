@@ -13,7 +13,8 @@ from max_mamba.layers.mixer import mamba2_mixer_initializer
 
 
 def get_max_model_results(
-    device,
+    max_device,
+    max_dtype,
     config,
     input_ids: np.ndarray,
     weights_registry: dict | None = None,
@@ -21,13 +22,13 @@ def get_max_model_results(
     input_ids_size = tuple(input_ids.shape)
     with Graph(
         "Mamba2Model",
-        input_types=(TensorType(DType.int64, input_ids_size, device),),
+        input_types=(TensorType(DType.int64, input_ids_size, max_device),),
     ) as model_graph:
         input_ids_t = model_graph.inputs[0]
-        model = Mamba2Model(config=config, device=device)
+        model = Mamba2Model(config=config, device=max_device, dtype=max_dtype)
         model.state_dict()
         model_graph.output(
-            model(input_ids=input_ids_t, return_dict=False).last_hidden_state
+            model(input_ids=input_ids_t, return_dict=True).last_hidden_state
         )
 
     session = InferenceSession()
@@ -52,7 +53,9 @@ def get_hf_model_results(config, input_ids: np.ndarray):
 
 
 @pytest.mark.parametrize("num_hidden_layers", [1, 2, 4])
-def test_mamba2_model_equivalence(RTOL, max_device, num_hidden_layers, mamba2_configs):
+def test_mamba2_model_equivalence(
+    RTOL, max_device, max_dtype, num_hidden_layers, mamba2_configs
+):
     # Get configs and set num layers
     max_config, hf_config = mamba2_configs
     max_config.num_hidden_layers = num_hidden_layers
@@ -86,7 +89,8 @@ def test_mamba2_model_equivalence(RTOL, max_device, num_hidden_layers, mamba2_co
             )  # NCHW --> NHWC
 
     states = get_max_model_results(
-        device=max_device,
+        max_dtype=max_dtype,
+        max_device=max_device,
         config=max_config,
         input_ids=input_ids,
         weights_registry=weights_registry,
